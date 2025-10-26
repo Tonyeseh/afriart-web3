@@ -243,6 +243,72 @@ export const statsAPI = {
   },
 };
 
+// Admin API functions
+export const adminAPI = {
+  async getPendingVerifications() {
+    return apiRequest('/admin/verifications/pending', {}, true);
+  },
+
+  async getAllVerifications(status?: 'pending' | 'approved' | 'rejected') {
+    const params = status ? `?status=${status}` : '';
+    return apiRequest(`/admin/verifications${params}`, {}, true);
+  },
+
+  async approveArtistVerification(verificationId: string) {
+    return apiRequest(`/admin/verifications/${verificationId}/approve`, {
+      method: 'POST',
+    }, true);
+  },
+
+  async rejectArtistVerification(verificationId: string, reason: string) {
+    return apiRequest(`/admin/verifications/${verificationId}/reject`, {
+      method: 'POST',
+      body: JSON.stringify({ reason }),
+    }, true);
+  },
+
+  async getPlatformStats() {
+    return apiRequest('/admin/stats', {}, true);
+  },
+
+  async getUsers(filters: {
+    role?: 'buyer' | 'artist' | 'admin';
+    status?: string;
+    limit?: number;
+    offset?: number;
+  } = {}) {
+    const params = new URLSearchParams();
+    Object.entries(filters).forEach(([key, value]) => {
+      if (value !== undefined) {
+        params.append(key, value.toString());
+      }
+    });
+
+    const queryString = params.toString();
+    return apiRequest(`/admin/users${queryString ? `?${queryString}` : ''}`, {}, true);
+  },
+
+  async updateUserRole(walletAddress: string, role: 'buyer' | 'artist' | 'admin') {
+    return apiRequest(`/admin/users/${walletAddress}/role`, {
+      method: 'PATCH',
+      body: JSON.stringify({ role }),
+    }, true);
+  },
+
+  async suspendUser(walletAddress: string, reason: string) {
+    return apiRequest(`/admin/users/${walletAddress}/suspend`, {
+      method: 'POST',
+      body: JSON.stringify({ reason }),
+    }, true);
+  },
+
+  async unsuspendUser(walletAddress: string) {
+    return apiRequest(`/admin/users/${walletAddress}/unsuspend`, {
+      method: 'POST',
+    }, true);
+  },
+};
+
 // Upload API functions
 export const uploadAPI = {
   /**

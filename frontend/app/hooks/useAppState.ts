@@ -2,7 +2,6 @@
 
 import { useState } from 'react';
 import { NFT } from '../components/NFTCard';
-import { PurchaseData } from '../components/PurchaseModal';
 
 export function useAppState() {
   const [currentPage, setCurrentPage] = useState('home');

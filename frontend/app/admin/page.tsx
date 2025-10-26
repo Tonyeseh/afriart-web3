@@ -14,7 +14,6 @@ import {
   Users,
   Image as ImageIcon,
   TrendingUp,
-  DollarSign,
   Activity,
   CheckCircle,
   XCircle,
@@ -28,7 +27,7 @@ import {
   Palette,
 } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
-import { statsAPI, userAPI } from '../utils/api';
+import { adminAPI } from '../utils/api';
 
 interface ArtistVerification {
   id: string;
@@ -68,7 +67,6 @@ export default function AdminPage() {
   const [loading, setLoading] = useState(true);
   const [stats, setStats] = useState<PlatformStats | null>(null);
   const [verifications, setVerifications] = useState<ArtistVerification[]>([]);
-  const [selectedVerification, setSelectedVerification] = useState<ArtistVerification | null>(null);
   const [processingId, setProcessingId] = useState<string | null>(null);
 
   // Route guard - only allow admins
@@ -92,55 +90,60 @@ export default function AdminPage() {
     setLoading(true);
     try {
       // Fetch platform stats
-      const statsResponse = await statsAPI.getMarketplaceStats();
+      const statsResponse = await adminAPI.getPlatformStats();
       if (statsResponse.success && statsResponse.data) {
         setStats(statsResponse.data);
       }
 
-      // Fetch pending verifications (mock data for now)
-      // In production, this would be: await userAPI.getPendingVerifications()
-      const mockVerifications: ArtistVerification[] = [
-        {
-          id: '1',
-          artistWallet: '0.0.123456',
-          displayName: 'Kwame Mensah',
-          email: 'kwame@example.com',
-          bio: 'Contemporary African artist specializing in abstract expressionism and mixed media. My work explores themes of identity, heritage, and cultural fusion.',
-          profilePictureUrl: '/api/placeholder/100/100',
-          kycDocuments: {
-            idDocument: 'QmX4z9KvP2wN5hY6tR8jL3mQ9xC1vB4nM7pS2kT6fG8hD5',
-            proofOfAddress: 'QmY5a8LqW3oP6iU7rT9kM4nC2xV5bO8pN1mS3lU7gH9iE6',
-            artistStatement: 'QmZ6b9MrX4pQ7jV8sU0lN5oD3yW6cP9qO2nT4mV8hI0jF7',
+      // Fetch all verifications
+      const verificationsResponse = await adminAPI.getAllVerifications();
+      if (verificationsResponse.success && verificationsResponse.data) {
+        setVerifications(verificationsResponse.data);
+      } else {
+        // Fallback to mock data if API fails
+        const mockVerifications: ArtistVerification[] = [
+          {
+            id: '1',
+            artistWallet: '0.0.123456',
+            displayName: 'Kwame Mensah',
+            email: 'kwame@example.com',
+            bio: 'Contemporary African artist specializing in abstract expressionism and mixed media. My work explores themes of identity, heritage, and cultural fusion.',
+            profilePictureUrl: '/api/placeholder/100/100',
+            kycDocuments: {
+              idDocument: 'QmX4z9KvP2wN5hY6tR8jL3mQ9xC1vB4nM7pS2kT6fG8hD5',
+              proofOfAddress: 'QmY5a8LqW3oP6iU7rT9kM4nC2xV5bO8pN1mS3lU7gH9iE6',
+              artistStatement: 'QmZ6b9MrX4pQ7jV8sU0lN5oD3yW6cP9qO2nT4mV8hI0jF7',
+            },
+            portfolioSamples: [
+              'QmA7c0NsY5qR8kW9tV1mO6pE4zX7dQ0rP3oU5nW9iJ1kG8',
+              'QmB8d1OtZ6rS9lX0uW2nP7qF5aY8eR1sQ4pV6oX0jK2lH9',
+              'QmC9e2PuA7sT0mY1vX3oQ8rG6bZ9fS2tR5qW7pY1kL3mI0',
+            ],
+            status: 'pending',
+            submittedAt: new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString(),
           },
-          portfolioSamples: [
-            'QmA7c0NsY5qR8kW9tV1mO6pE4zX7dQ0rP3oU5nW9iJ1kG8',
-            'QmB8d1OtZ6rS9lX0uW2nP7qF5aY8eR1sQ4pV6oX0jK2lH9',
-            'QmC9e2PuA7sT0mY1vX3oQ8rG6bZ9fS2tR5qW7pY1kL3mI0',
-          ],
-          status: 'pending',
-          submittedAt: new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString(),
-        },
-        {
-          id: '2',
-          artistWallet: '0.0.234567',
-          displayName: 'Amara Okafor',
-          email: 'amara@example.com',
-          bio: 'Digital artist and illustrator creating vibrant representations of African folklore and mythology through modern digital techniques.',
-          profilePictureUrl: '/api/placeholder/100/100',
-          kycDocuments: {
-            idDocument: 'QmD0f3QvB8tU1nZ2wY4pR9sH7cA0gT3uS6rX8qZ2lM4nJ1',
-            proofOfAddress: 'QmE1g4RwC9uV2oA3xZ5qS0tI8dB1hU4vT7sY9rA3mN5oK2',
+          {
+            id: '2',
+            artistWallet: '0.0.234567',
+            displayName: 'Amara Okafor',
+            email: 'amara@example.com',
+            bio: 'Digital artist and illustrator creating vibrant representations of African folklore and mythology through modern digital techniques.',
+            profilePictureUrl: '/api/placeholder/100/100',
+            kycDocuments: {
+              idDocument: 'QmD0f3QvB8tU1nZ2wY4pR9sH7cA0gT3uS6rX8qZ2lM4nJ1',
+              proofOfAddress: 'QmE1g4RwC9uV2oA3xZ5qS0tI8dB1hU4vT7sY9rA3mN5oK2',
+            },
+            portfolioSamples: [
+              'QmF2h5SxD0wW3pB4aA6rT1uJ9eC2iV5wU8tZ0sB4oO6pL3',
+              'QmG3i6TyE1xX4qC5bB7sU2vK0fD3jW6xV9uA1tC5pP7qM4',
+            ],
+            status: 'pending',
+            submittedAt: new Date(Date.now() - 5 * 24 * 60 * 60 * 1000).toISOString(),
           },
-          portfolioSamples: [
-            'QmF2h5SxD0wW3pB4aA6rT1uJ9eC2iV5wU8tZ0sB4oO6pL3',
-            'QmG3i6TyE1xX4qC5bB7sU2vK0fD3jW6xV9uA1tC5pP7qM4',
-          ],
-          status: 'pending',
-          submittedAt: new Date(Date.now() - 5 * 24 * 60 * 60 * 1000).toISOString(),
-        },
-      ];
+        ];
 
-      setVerifications(mockVerifications);
+        setVerifications(mockVerifications);
+      }
     } catch (error) {
       console.error('Error fetching admin data:', error);
     } finally {
@@ -151,22 +154,23 @@ export default function AdminPage() {
   const handleApprove = async (verificationId: string) => {
     setProcessingId(verificationId);
     try {
-      // In production: await userAPI.approveArtistVerification(verificationId)
-      await new Promise(resolve => setTimeout(resolve, 1500));
+      const response = await adminAPI.approveArtistVerification(verificationId);
 
-      setVerifications(prev =>
-        prev.map(v =>
-          v.id === verificationId
-            ? { ...v, status: 'approved', reviewedAt: new Date().toISOString(), reviewedBy: user?.walletAddress }
-            : v
-        )
-      );
-
-      alert('Artist verification approved successfully!');
-      setSelectedVerification(null);
+      if (response.success) {
+        setVerifications(prev =>
+          prev.map(v =>
+            v.id === verificationId
+              ? { ...v, status: 'approved', reviewedAt: new Date().toISOString(), reviewedBy: user?.walletAddress }
+              : v
+          )
+        );
+        alert('Artist verification approved successfully!');
+      } else {
+        throw new Error(response.error || 'Failed to approve verification');
+      }
     } catch (error) {
       console.error('Error approving verification:', error);
-      alert('Failed to approve verification. Please try again.');
+      alert(error instanceof Error ? error.message : 'Failed to approve verification. Please try again.');
     } finally {
       setProcessingId(null);
     }
@@ -178,22 +182,23 @@ export default function AdminPage() {
 
     setProcessingId(verificationId);
     try {
-      // In production: await userAPI.rejectArtistVerification(verificationId, reason)
-      await new Promise(resolve => setTimeout(resolve, 1500));
+      const response = await adminAPI.rejectArtistVerification(verificationId, reason);
 
-      setVerifications(prev =>
-        prev.map(v =>
-          v.id === verificationId
-            ? { ...v, status: 'rejected', reviewedAt: new Date().toISOString(), reviewedBy: user?.walletAddress }
-            : v
-        )
-      );
-
-      alert('Artist verification rejected.');
-      setSelectedVerification(null);
+      if (response.success) {
+        setVerifications(prev =>
+          prev.map(v =>
+            v.id === verificationId
+              ? { ...v, status: 'rejected', reviewedAt: new Date().toISOString(), reviewedBy: user?.walletAddress }
+              : v
+          )
+        );
+        alert('Artist verification rejected.');
+      } else {
+        throw new Error(response.error || 'Failed to reject verification');
+      }
     } catch (error) {
       console.error('Error rejecting verification:', error);
-      alert('Failed to reject verification. Please try again.');
+      alert(error instanceof Error ? error.message : 'Failed to reject verification. Please try again.');
     } finally {
       setProcessingId(null);
     }
