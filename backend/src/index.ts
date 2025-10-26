@@ -16,6 +16,8 @@ import artistRoutes from './routes/artist.routes';
 import nftRoutes from './routes/nft.routes';
 import uploadRoutes from './routes/upload.routes';
 import adminRoutes from './routes/admin.routes';
+import purchaseRoutes from './routes/purchase.routes';
+import salesRoutes from './routes/sales.routes';
 
 // Load environment variables
 dotenv.config({ path: '../' });
@@ -80,6 +82,8 @@ app.use('/api/artists', artistRoutes);
 app.use('/api/nfts', nftRoutes);
 app.use('/api/upload', uploadRoutes);
 app.use('/api/admin', adminRoutes);
+app.use('/api/purchases', purchaseRoutes);
+app.use('/api/sales', salesRoutes);
 
 // Error handlers
 app.use(notFoundHandler);

@@ -1,15 +1,16 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { Input } from './ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
 import { Switch } from './ui/switch';
 import { Label } from './ui/label';
 import { Button } from './ui/button';
-import { Search, Filter, X, Grid, List } from 'lucide-react';
+import { Search, Filter, X, Grid, List, Loader2, AlertCircle } from 'lucide-react';
 import { NFTCard, NFT } from './NFTCard';
 import { useDebounce } from '../hooks/useDebounce';
+import { nftAPI } from '../utils/api';
 
 interface GalleryProps {
-  nfts: NFT[];
+  initialNfts?: NFT[];
   onNFTAction: (action: string, nft: NFT) => void;
 }
 
@@ -34,7 +35,18 @@ const artMaterials: Record<string, string[]> = {
   'Digital Art': ['digital painting software', '3D modeling', 'AI-generated art', 'VR art tools', 'NFT platforms']
 };
 
-export function Gallery({ nfts, onNFTAction }: GalleryProps) {
+export function Gallery({ initialNfts, onNFTAction }: GalleryProps) {
+  // Data state
+  const [nfts, setNfts] = useState<NFT[]>(initialNfts || []);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  // Pagination state
+  const [currentPage, setCurrentPage] = useState(1);
+  const [totalNFTs, setTotalNFTs] = useState(0);
+  const itemsPerPage = 12;
+
+  // Filter state
   const [searchTerm, setSearchTerm] = useState('');
   const [sortBy, setSortBy] = useState('recent');
   const [selectedTechnique, setSelectedTechnique] = useState('All');
@@ -42,7 +54,6 @@ export function Gallery({ nfts, onNFTAction }: GalleryProps) {
   const [listingTypeFilter, setListingTypeFilter] = useState('all');
   const [physicalCopyFilter, setPhysicalCopyFilter] = useState('all');
   const [bring2LifeOnly, setBring2LifeOnly] = useState(false);
-  const [showMore, setShowMore] = useState(false);
   const [priceRange, setPriceRange] = useState({ min: '', max: '' });
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
 
@@ -50,6 +61,46 @@ export function Gallery({ nfts, onNFTAction }: GalleryProps) {
   const debouncedSearch = useDebounce(searchTerm, 300);
 
   const availableMaterials = selectedTechnique === 'All' ? [] : artMaterials[selectedTechnique] || [];
+
+  // Fetch NFTs from API
+  useEffect(() => {
+    const fetchNFTs = async () => {
+      setLoading(true);
+      setError(null);
+
+      try {
+        const filters: any = {
+          limit: itemsPerPage,
+          offset: (currentPage - 1) * itemsPerPage,
+        };
+
+        if (debouncedSearch) {
+          filters.search = debouncedSearch;
+        }
+
+        if (selectedTechnique !== 'All') {
+          filters.technique = selectedTechnique;
+        }
+
+        const response = await nftAPI.getNFTs(filters);
+
+        if (response.success && response.data) {
+          setNfts(response.data.nfts || response.data);
+          setTotalNFTs(response.data.total || response.data.length || 0);
+        } else {
+          throw new Error(response.error || 'Failed to fetch NFTs');
+        }
+      } catch (err) {
+        console.error('Error fetching NFTs:', err);
+        setError(err instanceof Error ? err.message : 'Failed to load NFTs');
+        setNfts(initialNfts || []);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchNFTs();
+  }, [debouncedSearch, selectedTechnique, currentPage, initialNfts]);
 
   // Reset all filters
   const resetFilters = () => {
@@ -61,6 +112,7 @@ export function Gallery({ nfts, onNFTAction }: GalleryProps) {
     setPriceRange({ min: '', max: '' });
     setBring2LifeOnly(false);
     setSortBy('recent');
+    setCurrentPage(1);
   };
 
   // Check if any filters are active
@@ -180,7 +232,10 @@ export function Gallery({ nfts, onNFTAction }: GalleryProps) {
     });
   }, [nfts, debouncedSearch, selectedTechnique, selectedMaterial, listingTypeFilter, physicalCopyFilter, sortBy, priceRange, bring2LifeOnly]);
 
-  const displayedNFTs = showMore ? filteredNFTs : filteredNFTs.slice(0, 12);
+  // Calculate total pages
+  const totalPages = Math.ceil(totalNFTs / itemsPerPage);
+
+  const displayedNFTs = filteredNFTs;
 
   return (
     <div className="py-8">
@@ -412,8 +467,33 @@ export function Gallery({ nfts, onNFTAction }: GalleryProps) {
           </div>
         </div>
 
+        {/* Loading State */}
+        {loading && (
+          <div className="text-center py-16">
+            <Loader2 className="h-16 w-16 text-purple-400 mx-auto mb-4 animate-spin" />
+            <h3 className="text-xl font-semibold text-gray-400 mb-2">Loading artworks...</h3>
+            <p className="text-gray-500">Please wait while we fetch the latest NFTs</p>
+          </div>
+        )}
+
+        {/* Error State */}
+        {error && !loading && (
+          <div className="text-center py-16">
+            <AlertCircle className="h-16 w-16 text-red-400 mx-auto mb-4" />
+            <h3 className="text-xl font-semibold text-red-400 mb-2">Error Loading NFTs</h3>
+            <p className="text-gray-500 mb-4">{error}</p>
+            <Button
+              onClick={() => window.location.reload()}
+              variant="outline"
+              className="border-purple-500 text-purple-400 hover:bg-purple-500 hover:text-white"
+            >
+              Retry
+            </Button>
+          </div>
+        )}
+
         {/* NFT Grid */}
-        {displayedNFTs.length > 0 ? (
+        {!loading && !error && displayedNFTs.length > 0 && (
           <>
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6 mb-12">
               {displayedNFTs.map((nft) => (
@@ -430,20 +510,66 @@ export function Gallery({ nfts, onNFTAction }: GalleryProps) {
               ))}
             </div>
 
-            {/* View More Button */}
-            {filteredNFTs.length > 12 && !showMore && (
-              <div className="text-center">
-                <Button 
-                  onClick={() => setShowMore(true)}
+            {/* Pagination */}
+            {totalPages > 1 && (
+              <div className="flex justify-center items-center gap-2 mb-8">
+                <Button
+                  onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
+                  disabled={currentPage === 1}
                   variant="outline"
-                  className="border-purple-500 text-purple-400 hover:bg-purple-500 hover:text-white"
+                  className="border-gray-700 text-gray-300 hover:bg-gray-800 disabled:opacity-50 disabled:cursor-not-allowed"
                 >
-                  View More ({filteredNFTs.length - 12} remaining)
+                  Previous
+                </Button>
+
+                <div className="flex items-center gap-2">
+                  {Array.from({ length: Math.min(5, totalPages) }, (_, i) => {
+                    let pageNum;
+                    if (totalPages <= 5) {
+                      pageNum = i + 1;
+                    } else if (currentPage <= 3) {
+                      pageNum = i + 1;
+                    } else if (currentPage >= totalPages - 2) {
+                      pageNum = totalPages - 4 + i;
+                    } else {
+                      pageNum = currentPage - 2 + i;
+                    }
+
+                    return (
+                      <Button
+                        key={pageNum}
+                        onClick={() => setCurrentPage(pageNum)}
+                        variant={currentPage === pageNum ? 'default' : 'outline'}
+                        className={currentPage === pageNum
+                          ? 'bg-gradient-to-r from-purple-600 to-pink-600 text-white'
+                          : 'border-gray-700 text-gray-300 hover:bg-gray-800'
+                        }
+                      >
+                        {pageNum}
+                      </Button>
+                    );
+                  })}
+                </div>
+
+                <Button
+                  onClick={() => setCurrentPage(prev => Math.min(totalPages, prev + 1))}
+                  disabled={currentPage === totalPages}
+                  variant="outline"
+                  className="border-gray-700 text-gray-300 hover:bg-gray-800 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  Next
                 </Button>
               </div>
             )}
+
+            <div className="text-center text-sm text-gray-500">
+              Showing {((currentPage - 1) * itemsPerPage) + 1} - {Math.min(currentPage * itemsPerPage, totalNFTs)} of {totalNFTs} artworks
+            </div>
           </>
-        ) : (
+        )}
+
+        {/* Empty State */}
+        {!loading && !error && displayedNFTs.length === 0 && (
           <div className="text-center py-16">
             <Filter className="h-16 w-16 text-gray-600 mx-auto mb-4" />
             <h3 className="text-xl font-semibold text-gray-400 mb-2">No artworks found</h3>

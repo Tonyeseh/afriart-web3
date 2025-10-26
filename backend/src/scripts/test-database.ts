@@ -10,9 +10,10 @@
 import dotenv from 'dotenv';
 import { supabase } from '../config/database';
 import { logger } from '../config/logger';
+import path from 'path'
 
 // Load environment variables
-dotenv.config();
+dotenv.config({path: path.resolve(__dirname, '../../.env')});
 
 interface TestResult {
   name: string;

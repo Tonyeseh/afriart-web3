@@ -25,6 +25,7 @@ export interface NFT {
   isWatched?: boolean;
   isFavorited?: boolean;
   favoriteCount?: number;
+  tokenId: string
 }
 
 interface NFTCardProps {

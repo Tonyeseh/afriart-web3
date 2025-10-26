@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { authenticate, requireRole } from '../middleware/auth.middleware';
 import { mintNFT, uploadMiddleware, listNFTs, getNFT, toggleListing, updatePrice } from '../controllers/nft.controller';
+import { purchaseNFT } from '../controllers/purchase.controller';
 
 const router: Router = Router();
 
@@ -492,5 +493,152 @@ router.patch('/:id/list', authenticate, toggleListing);
  *               $ref: '#/components/schemas/Error'
  */
 router.patch('/:id/price', authenticate, updatePrice);
+
+/**
+ * @swagger
+ * /api/nfts/{id}/purchase:
+ *   post:
+ *     summary: Purchase an NFT
+ *     description: |
+ *       Complete NFT purchase workflow:
+ *       1. Validate NFT is listed and price matches
+ *       2. Execute atomic Hedera transaction (HBAR + NFT transfer)
+ *       3. Verify transaction on Mirror Node
+ *       4. Update NFT ownership in database
+ *       5. Create sale record
+ *
+ *       The transaction transfers:
+ *       - 98% of price to seller
+ *       - 2% platform fee to treasury
+ *       - NFT ownership to buyer
+ *
+ *       All transfers happen atomically (all succeed or all fail).
+ *     tags: [NFTs, Purchases]
+ *     security:
+ *       - BearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *           format: uuid
+ *         description: NFT ID
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - expectedPrice
+ *             properties:
+ *               expectedPrice:
+ *                 type: number
+ *                 description: Expected price in HBAR (must match current listing price)
+ *                 example: 100
+ *                 minimum: 0.01
+ *     responses:
+ *       200:
+ *         description: NFT purchased successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                   example: true
+ *                 message:
+ *                   type: string
+ *                   example: NFT purchased successfully
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     sale:
+ *                       type: object
+ *                       properties:
+ *                         id:
+ *                           type: string
+ *                           format: uuid
+ *                         nft_id:
+ *                           type: string
+ *                           format: uuid
+ *                         seller_id:
+ *                           type: string
+ *                           format: uuid
+ *                         buyer_id:
+ *                           type: string
+ *                           format: uuid
+ *                         sale_price_hbar:
+ *                           type: string
+ *                           example: "100.00"
+ *                         platform_fee_hbar:
+ *                           type: string
+ *                           example: "2.00"
+ *                         artist_receives_hbar:
+ *                           type: string
+ *                           example: "98.00"
+ *                         transaction_id:
+ *                           type: string
+ *                           example: "0.0.123456@1234567890.123456789"
+ *                         status:
+ *                           type: string
+ *                           example: completed
+ *                         created_at:
+ *                           type: string
+ *                           format: date-time
+ *                     transactionId:
+ *                       type: string
+ *                       example: "0.0.123456@1234567890.123456789"
+ *       400:
+ *         description: Invalid request or NFT not available for purchase
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ *             examples:
+ *               notListed:
+ *                 summary: NFT not listed
+ *                 value:
+ *                   success: false
+ *                   error: NFT is not listed for sale
+ *               priceChanged:
+ *                 summary: Price changed
+ *                 value:
+ *                   success: false
+ *                   error: "Price has changed. Current price: 150 HBAR"
+ *               ownNFT:
+ *                 summary: Cannot buy own NFT
+ *                 value:
+ *                   success: false
+ *                   error: Cannot purchase your own NFT
+ *               insufficientBalance:
+ *                 summary: Insufficient balance
+ *                 value:
+ *                   success: false
+ *                   error: Insufficient HBAR balance
+ *       401:
+ *         $ref: '#/components/responses/UnauthorizedError'
+ *       404:
+ *         description: NFT not found
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ *       409:
+ *         description: Purchase already in progress
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ *       500:
+ *         description: Transaction failed on blockchain
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ */
+router.post('/:id/purchase', authenticate, purchaseNFT);
 
 export default router;
