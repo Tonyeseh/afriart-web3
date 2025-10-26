@@ -1,24 +1,33 @@
-# Nestjs specific
-/dist
-/node_modules
-/build
-/tmp
+# Next.js build output
+.next/
+out/
+
+# Node modules
+node_modules/
+
+# Environment variables
+.env
+.env.development.local
+.env.test.local
+.env.production.local
+.env.local
+
+# npm package manager cache
+.npm/
+
+# Yarn cache
+.yarn/cache
+.yarn/unplugged
+.yarn/build-state.yml
+.yarn/install-state.cjs
+
+# Editor/OS specific files
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
 
 # Logs
-logs
-*.log
 npm-debug.log*
-pnpm-debug.log*
 yarn-debug.log*
 yarn-error.log*
-lerna-debug.log*
-
-# dotenv environment variable files
-.env
-.env.development
-.env.test
-.env.production
-
-# temp directory
-.temp
-.tmp
