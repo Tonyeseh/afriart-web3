@@ -10,19 +10,20 @@ import { Progress } from './ui/progress';
 import { Card, CardContent } from './ui/card';
 import { Badge } from './ui/badge';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from './ui/tooltip';
-import { 
-  Upload, 
-  X, 
-  Loader2, 
-  CheckCircle, 
-  Info, 
-  Image as ImageIcon, 
+import {
+  Upload,
+  X,
+  Loader2,
+  CheckCircle,
+  Info,
+  Image as ImageIcon,
   Video,
   Wallet,
   Sparkles
 } from 'lucide-react';
 import { ImageWithFallback } from './figma/ImageWithFallback';
 import { motion } from 'motion/react';
+import { uploadAPI, nftAPI } from '../utils/api';
 
 interface CreateNFTModalProps {
   isOpen: boolean;
@@ -73,7 +74,7 @@ const tooltips = {
 export function CreateNFTModal({ isOpen, onClose, walletAddress, onSuccess }: CreateNFTModalProps) {
   const [currentState, setCurrentState] = useState<ModalState>('form');
   const fileInputRef = useRef<HTMLInputElement>(null);
-  
+
   // Form state
   const [formData, setFormData] = useState({
     title: '',
@@ -90,6 +91,8 @@ export function CreateNFTModal({ isOpen, onClose, walletAddress, onSuccess }: Cr
   const [dragActive, setDragActive] = useState(false);
   const [mintedNFT, setMintedNFT] = useState<any>(null);
   const [validationErrors, setValidationErrors] = useState<string[]>([]);
+  const [uploadProgress, setUploadProgress] = useState(0);
+  const [mintingStep, setMintingStep] = useState<'uploading' | 'creating' | 'finalizing'>('uploading');
 
   const hbarToUsd = 0.25; // Mock conversion rate
   const usdPrice = parseFloat(formData.price) * hbarToUsd || 0;
@@ -228,32 +231,94 @@ export function CreateNFTModal({ isOpen, onClose, walletAddress, onSuccess }: Cr
 
     setValidationErrors([]);
     setCurrentState('minting');
+    setUploadProgress(0);
+    setMintingStep('uploading');
 
-    // Simulate minting process
-    await new Promise(resolve => setTimeout(resolve, 3000));
+    try {
+      // Step 1: Prepare form data for backend
+      if (!formData.file) {
+        throw new Error('No file selected');
+      }
 
-    const newNFT = {
-      id: `nft_${Date.now()}`,
-      title: formData.title,
-      description: formData.description,
-      technique: formData.technique,
-      material: formData.material,
-      price: parseFloat(formData.price),
-      usdPrice: usdPrice,
-      physicalCopy: formData.physicalCopy,
-      image: formData.file ? URL.createObjectURL(formData.file) : '',
-      tokenId: `0.0.${Math.floor(Math.random() * 900000) + 100000}`,
-      creator: walletAddress,
-      owner: walletAddress,
-      listingType: formData.listingType,
-      auctionDuration: formData.listingType === 'auction' ? parseInt(formData.auctionDuration) : undefined,
-      auctionEndTime: formData.listingType === 'auction'
-        ? new Date(Date.now() + parseInt(formData.auctionDuration) * 60 * 60 * 1000)
-        : undefined
-    };
+      setMintingStep('creating');
+      setUploadProgress(30);
 
-    setMintedNFT(newNFT);
-    setCurrentState('success');
+      // Step 2: Call real minting API endpoint
+      const mintFormData = new FormData();
+      mintFormData.append('title', formData.title);
+      mintFormData.append('description', formData.description);
+      mintFormData.append('image', formData.file);
+      mintFormData.append('technique', formData.technique);
+      mintFormData.append('material', formData.material);
+
+      // Get JWT token from localStorage
+      const token = localStorage.getItem('authToken');
+      if (!token) {
+        throw new Error('Authentication required. Please login again.');
+      }
+
+      setUploadProgress(50);
+
+      // Call the real minting endpoint
+      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000'}/api/nfts/mint`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+        },
+        body: mintFormData,
+      });
+
+      setUploadProgress(80);
+
+      const result = await response.json();
+
+      if (!response.ok || !result.success) {
+        throw new Error(result.error || 'Failed to mint NFT');
+      }
+
+      // Step 3: Finalize
+      setMintingStep('finalizing');
+      setUploadProgress(95);
+
+      const { nft, transaction } = result.data;
+
+      const newNFT = {
+        id: nft.id,
+        tokenId: nft.token_id,
+        serialNumber: nft.serial_number,
+        title: nft.title,
+        description: nft.description,
+        technique: nft.art_technique,
+        material: nft.art_material,
+        price: parseFloat(formData.price),
+        usdPrice: parseFloat(formData.price) * hbarToUsd,
+        physicalCopy: formData.physicalCopy,
+        image: nft.image_url,
+        ipfsHash: nft.image_ipfs_cid,
+        metadataUrl: nft.metadata_url,
+        metadataCid: nft.metadata_ipfs_cid,
+        creator: walletAddress,
+        owner: walletAddress,
+        listingType: formData.listingType,
+        auctionDuration: formData.listingType === 'auction' ? parseInt(formData.auctionDuration) : undefined,
+        auctionEndTime: formData.listingType === 'auction'
+          ? new Date(Date.now() + parseInt(formData.auctionDuration) * 60 * 60 * 1000)
+          : undefined,
+        hederaTransactionId: transaction.transactionId,
+        mintedAt: nft.minted_at,
+      };
+
+      setUploadProgress(100);
+      setMintedNFT(newNFT);
+      setCurrentState('success');
+    } catch (error) {
+      console.error('Error minting NFT:', error);
+      setValidationErrors([
+        error instanceof Error ? error.message : 'Failed to mint NFT. Please try again.'
+      ]);
+      setCurrentState('form');
+      setUploadProgress(0);
+    }
   };
 
   const handleReset = () => {
@@ -659,29 +724,73 @@ export function CreateNFTModal({ isOpen, onClose, walletAddress, onSuccess }: Cr
     </div>
   );
 
-  const renderMintingState = () => (
-    <div className="text-center space-y-6 py-8">
-      <div className="space-y-4">
-        <div className="flex justify-center">
-          <Loader2 className="h-16 w-16 text-purple-400 animate-spin" />
+  const renderMintingState = () => {
+    const getStepMessage = () => {
+      switch (mintingStep) {
+        case 'uploading':
+          return 'Uploading artwork to IPFS...';
+        case 'creating':
+          return 'Creating NFT on Hedera blockchain...';
+        case 'finalizing':
+          return 'Finalizing NFT creation...';
+        default:
+          return 'Processing...';
+      }
+    };
+
+    const getProgressValue = () => {
+      if (mintingStep === 'uploading') {
+        return uploadProgress * 0.5; // Uploading is 50% of total progress
+      } else if (mintingStep === 'creating') {
+        return 50 + 25; // 75%
+      } else if (mintingStep === 'finalizing') {
+        return 50 + 25 + 20; // 95%
+      }
+      return 0;
+    };
+
+    return (
+      <div className="text-center space-y-6 py-8">
+        <div className="space-y-4">
+          <div className="flex justify-center">
+            <Loader2 className="h-16 w-16 text-purple-400 animate-spin" />
+          </div>
+          <div>
+            <h3 className="text-xl font-semibold text-white mb-2">Minting Your NFT...</h3>
+            <p className="text-gray-400">
+              {getStepMessage()}
+            </p>
+            {mintingStep === 'uploading' && uploadProgress > 0 && (
+              <p className="text-sm text-purple-400 mt-2">
+                Upload Progress: {uploadProgress}%
+              </p>
+            )}
+          </div>
         </div>
-        <div>
-          <h3 className="text-xl font-semibold text-white mb-2">Minting Your NFT...</h3>
-          <p className="text-gray-400">
-            Please confirm the transaction in your wallet. This may take a few seconds.
+
+        <div className="space-y-2">
+          <Progress value={getProgressValue()} className="w-full max-w-md mx-auto" />
+          <div className="flex justify-between text-xs text-gray-500 max-w-md mx-auto px-2">
+            <span className={mintingStep === 'uploading' ? 'text-purple-400 font-semibold' : ''}>
+              Upload
+            </span>
+            <span className={mintingStep === 'creating' ? 'text-purple-400 font-semibold' : ''}>
+              Create
+            </span>
+            <span className={mintingStep === 'finalizing' ? 'text-purple-400 font-semibold' : ''}>
+              Finalize
+            </span>
+          </div>
+        </div>
+
+        <div className="pt-4">
+          <p className="text-xs text-gray-500 mb-4">
+            Please don't close this window while your NFT is being created.
           </p>
         </div>
       </div>
-      
-      <Progress value={66} className="w-full max-w-md mx-auto" />
-      
-      <div className="pt-4">
-        <Button variant="outline" onClick={handleClose}>
-          Cancel
-        </Button>
-      </div>
-    </div>
-  );
+    );
+  };
 
   const renderSuccessState = () => (
     <div className="text-center space-y-6 py-4">
