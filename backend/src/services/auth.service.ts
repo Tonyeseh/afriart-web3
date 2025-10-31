@@ -1,7 +1,8 @@
-import { PublicKey } from '@hashgraph/sdk';
-import * as jwt from 'jsonwebtoken';
-import { logger } from '../config/logger';
-import { JwtStringValue } from '../types/auth.type';
+import * as jwt from "jsonwebtoken";
+import { createHash } from "crypto";
+import { logger } from "../config/logger";
+import { JwtStringValue } from "../types/auth.type";
+import { recoverMessageAddress } from "viem";
 import dotenv from "dotenv";
 
 dotenv.config();
@@ -23,30 +24,43 @@ export class AuthService {
   private readonly messageExpiryMinutes = 5;
 
   constructor() {
-    this.jwtSecret = process.env.JWT_SECRET || '';
-    this.jwtExpiration = (process.env.JWT_EXPIRATION || '7d') as JwtStringValue;
+    this.jwtSecret = process.env.JWT_SECRET || "";
+    this.jwtExpiration = (process.env.JWT_EXPIRATION || "7d") as JwtStringValue;
 
-    console.log(this.jwtSecret, "jwtSecret")
+    console.log(this.jwtSecret, "jwtSecret");
     if (!this.jwtSecret) {
-      throw new Error('JWT_SECRET environment variable is required');
+      throw new Error("JWT_SECRET environment variable is required");
     }
   }
 
   /**
    * Creates a timestamped authentication message for the user to sign
+   * The message is designed to be clear and user-friendly for EIP-191 signing
    */
-  createAuthMessage(walletAddress: string): string {
+  createAuthMessage(walletAddress: string): {
+    timestamp: string;
+    message: string;
+    walletAddress: string;
+  } {
     const timestamp = Date.now();
-    const message = `AfriArt Authentication
+
+    // Create a simple, clear message for EIP-191 signing
+    // EIP-191 will automatically add the prefix: "\x19Ethereum Signed Message:\n" + length
+    const message = `Welcome to AfriArt!
+
+Sign this message to authenticate your wallet.
 
 Wallet: ${walletAddress}
 Timestamp: ${timestamp}
 
-Sign this message to prove you own this wallet.
 This signature will not trigger any blockchain transaction or cost any fees.`;
 
-    logger.info({ walletAddress, timestamp }, 'Created auth message');
-    return message;
+    logger.info({ walletAddress, timestamp }, "Created auth message");
+    return {
+      timestamp: timestamp.toString(),
+      walletAddress,
+      message,
+    };
   }
 
   /**
@@ -56,7 +70,7 @@ This signature will not trigger any blockchain transaction or cost any fees.`;
     try {
       const timestampMatch = message.match(/Timestamp: (\d+)/);
       if (!timestampMatch) {
-        logger.warn('No timestamp found in auth message');
+        logger.warn("No timestamp found in auth message");
         return false;
       }
 
@@ -67,97 +81,115 @@ This signature will not trigger any blockchain transaction or cost any fees.`;
       if (timeDiffMinutes > this.messageExpiryMinutes) {
         logger.warn(
           { timeDiffMinutes, maxMinutes: this.messageExpiryMinutes },
-          'Auth message expired'
+          "Auth message expired"
         );
         return false;
       }
 
       if (timeDiffMinutes < 0) {
-        logger.warn('Auth message timestamp is in the future');
+        logger.warn("Auth message timestamp is in the future");
         return false;
       }
 
       return true;
     } catch (error) {
-      logger.error({ error }, 'Error validating auth message');
+      logger.error({ error }, "Error validating auth message");
       return false;
     }
   }
 
+  async validateTimeStamp(messageTimestamp: number) {
+    const currentTimestamp = Date.now();
+    const timeDiffMinutes = (currentTimestamp - messageTimestamp) / 1000 / 60;
+
+    if (timeDiffMinutes > this.messageExpiryMinutes) {
+      logger.warn(
+        { timeDiffMinutes, maxMinutes: this.messageExpiryMinutes },
+        "Auth message expired"
+      );
+      return false;
+    }
+
+    if (timeDiffMinutes < 0) {
+      logger.warn("Auth message timestamp is in the future");
+      return false;
+    }
+
+    return true;
+  }
+
   /**
-   * Verifies that the signature was created by the wallet owner
-   * Handles both base64-encoded signatureMaps (from wallets) and hex signatures
+   * Verifies that the signature was created by the wallet owner using EIP-191
+   * Recovers the signer's address from the signature and compares with expected address
    */
   async verifyWalletSignature(
     message: string,
     signature: string,
-    publicKeyString: string
+    expectedAddress: string
   ): Promise<boolean> {
     try {
       logger.info(
         {
-          publicKey: publicKeyString,
+          expectedAddress,
           signatureLength: signature.length,
-          signaturePreview: signature.substring(0, 50) + '...'
+          signaturePreview: signature.substring(0, 50) + "...",
+          message: message.substring(0, 100) + "...",
         },
-        'Attempting signature verification'
+        "Attempting EIP-191 signature verification"
       );
 
-      // Parse the public key
-      const publicKey = PublicKey.fromString(publicKeyString);
-
-      // The signature from Hedera wallet is base64-encoded signatureMap
-      // Try base64 decoding first (most common from wallet extensions)
-      let signatureBytes: Buffer;
-
-      try {
-        // Try base64 first (Hedera wallet format)
-        signatureBytes = Buffer.from(signature, 'base64');
-        logger.debug({ decodedLength: signatureBytes.length }, 'Decoded signature as base64');
-      } catch (e) {
-        // Fallback to hex if base64 fails
-        try {
-          signatureBytes = Buffer.from(signature, 'hex');
-          logger.debug({ decodedLength: signatureBytes.length }, 'Decoded signature as hex');
-        } catch (e2) {
-          // If both fail, try as raw bytes
-          signatureBytes = Buffer.from(signature);
-          logger.debug({ decodedLength: signatureBytes.length }, 'Using signature as raw bytes');
-        }
+      // Validate signature format (should be 0x prefixed hex, 132 chars: 0x + 130 hex chars for 65 bytes)
+      const signatureRegex = /^0x[0-9a-fA-F]{130}$/;
+      if (!signatureRegex.test(signature)) {
+        logger.warn(
+          {
+            signatureLength: signature.length,
+            expected: 132,
+            hasPrefix: signature.startsWith("0x"),
+          },
+          "Invalid signature format. Expected 0x + 130 hex characters (65 bytes: r + s + v)"
+        );
+        return false;
       }
 
-      // Hedera signatures are typically 64 bytes (ED25519) or 65 bytes with recovery byte
-      // If we have a signatureMap (proto format), we need to extract the actual signature
-      if (signatureBytes.length > 100) {
-        logger.debug({ length: signatureBytes.length }, 'SignatureMap detected, extracting signature');
-        // SignatureMap is proto-encoded, we need to extract the signature bytes
-        // The signature is typically at the end of the proto structure
-        // For ED25519 signatures, look for the last 64 bytes
-        signatureBytes = signatureBytes.slice(-64);
-        logger.debug({ extractedLength: signatureBytes.length }, 'Extracted signature from map');
-      }
+      // Recover the address from the signature using viem
+      // This automatically handles EIP-191 formatting: "\x19Ethereum Signed Message:\n" + length + message
+      const recoveredAddress = await recoverMessageAddress({
+        message,
+        signature: signature as `0x${string}`,
+      });
 
-      // Verify the signature
-      const messageBytes = Buffer.from(message, 'utf-8');
-      const isValid = publicKey.verify(messageBytes, signatureBytes);
+      logger.debug(
+        {
+          expectedAddress: expectedAddress.toLowerCase(),
+          recoveredAddress: recoveredAddress.toLowerCase(),
+        },
+        "Address recovery completed"
+      );
+
+      // Compare addresses (case-insensitive)
+      const isValid =
+        recoveredAddress.toLowerCase() === expectedAddress.toLowerCase();
 
       logger.info(
         {
-          publicKey: publicKeyString,
+          expectedAddress,
+          recoveredAddress,
           isValid,
-          signatureBytesLength: signatureBytes.length,
-          messageBytesLength: messageBytes.length
         },
-        'Wallet signature verification result'
+        "EIP-191 signature verification result"
       );
 
       return isValid;
     } catch (error) {
-      logger.error({
-        error: error instanceof Error ? error.message : String(error),
-        publicKey: publicKeyString,
-        stack: error instanceof Error ? error.stack : undefined
-      }, 'Error verifying wallet signature');
+      logger.error(
+        {
+          error: error instanceof Error ? error.message : String(error),
+          expectedAddress,
+          stack: error instanceof Error ? error.stack : undefined,
+        },
+        "Error verifying wallet signature"
+      );
       return false;
     }
   }
@@ -180,7 +212,7 @@ This signature will not trigger any blockchain transaction or cost any fees.`;
 
     logger.info(
       { userId, walletAddress, role, expiresIn: this.jwtExpiration },
-      'Generated JWT token'
+      "Generated JWT token"
     );
 
     return token;
@@ -195,15 +227,15 @@ This signature will not trigger any blockchain transaction or cost any fees.`;
       return decoded;
     } catch (error) {
       if (error instanceof jwt.TokenExpiredError) {
-        logger.warn('Token expired');
-        throw new Error('Token expired');
+        logger.warn("Token expired");
+        throw new Error("Token expired");
       }
       if (error instanceof jwt.JsonWebTokenError) {
-        logger.warn({ error: error.message }, 'Invalid token');
-        throw new Error('Invalid token');
+        logger.warn({ error: error.message }, "Invalid token");
+        throw new Error("Invalid token");
       }
-      logger.error({ error }, 'Error verifying token');
-      throw new Error('Token verification failed');
+      logger.error({ error }, "Error verifying token");
+      throw new Error("Token verification failed");
     }
   }
 
@@ -213,7 +245,7 @@ This signature will not trigger any blockchain transaction or cost any fees.`;
   extractWalletFromMessage(message: string): string | null {
     const walletMatch = message.match(/Wallet: (0\.0\.\d+)/);
     if (!walletMatch) {
-      logger.warn('No wallet address found in message');
+      logger.warn("No wallet address found in message");
       return null;
     }
     return walletMatch[1];

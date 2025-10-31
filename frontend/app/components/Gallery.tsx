@@ -10,7 +10,7 @@ import { useDebounce } from '../hooks/useDebounce';
 import { nftAPI } from '../utils/api';
 
 interface GalleryProps {
-  initialNfts?: NFT[];
+  initialNfts: NFT[];
   onNFTAction: (action: string, nft: NFT) => void;
 }
 
@@ -41,6 +41,13 @@ export function Gallery({ initialNfts, onNFTAction }: GalleryProps) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Update nfts when initialNfts changes
+  useEffect(() => {
+    if (initialNfts && initialNfts.length > 0) {
+      setNfts(initialNfts);
+    }
+  }, [initialNfts]);
+
   // Pagination state
   const [currentPage, setCurrentPage] = useState(1);
   const [totalNFTs, setTotalNFTs] = useState(0);
@@ -62,8 +69,18 @@ export function Gallery({ initialNfts, onNFTAction }: GalleryProps) {
 
   const availableMaterials = selectedTechnique === 'All' ? [] : artMaterials[selectedTechnique] || [];
 
-  // Fetch NFTs from API
+  // Fetch NFTs from API only when filters change (not on initial load)
   useEffect(() => {
+    // Skip initial fetch if we already have initialNfts
+    // Only fetch when user applies filters or pagination
+    const shouldFetch = debouncedSearch || selectedTechnique !== 'All' || currentPage > 1;
+
+    if (!shouldFetch) {
+      // Set total based on initial NFTs
+      setTotalNFTs(initialNfts?.length || 0);
+      return;
+    }
+
     const fetchNFTs = async () => {
       setLoading(true);
       setError(null);
@@ -85,8 +102,10 @@ export function Gallery({ initialNfts, onNFTAction }: GalleryProps) {
         const response = await nftAPI.getNFTs(filters);
 
         if (response.success && response.data) {
-          setNfts(response.data.nfts || response.data);
-          setTotalNFTs(response.data.total || response.data.length || 0);
+          const nftsList = response.data.nfts || [];
+          setNfts(nftsList);
+          // Use pagination.total if available, otherwise use nfts length
+          setTotalNFTs(response.data.pagination?.total || nftsList.length || 0);
         } else {
           throw new Error(response.error || 'Failed to fetch NFTs');
         }
@@ -100,15 +119,15 @@ export function Gallery({ initialNfts, onNFTAction }: GalleryProps) {
     };
 
     fetchNFTs();
-  }, [debouncedSearch, selectedTechnique, currentPage, initialNfts]);
+  }, [debouncedSearch, selectedTechnique, currentPage, initialNfts, itemsPerPage]);
 
   // Reset all filters
   const resetFilters = () => {
     setSearchTerm('');
-    setSelectedTechnique('All');
-    setSelectedMaterial('All');
-    setListingTypeFilter('all');
-    setPhysicalCopyFilter('all');
+    setSelectedTechnique('');
+    setSelectedMaterial('');
+    setListingTypeFilter('');
+    setPhysicalCopyFilter('');
     setPriceRange({ min: '', max: '' });
     setBring2LifeOnly(false);
     setSortBy('recent');
@@ -130,13 +149,17 @@ export function Gallery({ initialNfts, onNFTAction }: GalleryProps) {
     return nfts
     .filter(nft => {
       // Search filter (using debounced value)
-      if (debouncedSearch && !nft.title.toLowerCase().includes(debouncedSearch.toLowerCase()) &&
-          !nft.creator.toLowerCase().includes(debouncedSearch.toLowerCase())) {
-        return false;
+      if (debouncedSearch) {
+        const searchLower = debouncedSearch.toLowerCase();
+        const titleMatch = nft.title?.toLowerCase().includes(searchLower);
+        const creatorMatch = nft.creator?.toLowerCase().includes(searchLower);
+        if (!titleMatch && !creatorMatch) {
+          return false;
+        }
       }
 
       // Price range filter
-      const nftPrice = nft.currentBid || nft.price;
+      const nftPrice = nft.currentBid || nft.price || 0;
       if (priceRange.min !== '' && nftPrice < parseFloat(priceRange.min)) {
         return false;
       }
@@ -169,16 +192,18 @@ export function Gallery({ initialNfts, onNFTAction }: GalleryProps) {
         return false;
       }
 
-      // Material filter (mock implementation)
-      if (selectedMaterial !== 'All') {
-        // In real app, this would check NFT material property
-        return true;
+      // Material filter
+      if (selectedMaterial !== 'All' && selectedMaterial !== '') {
+        if (nft.material && nft.material !== selectedMaterial) {
+          return false;
+        }
       }
 
       // Bring2Life filter (mock - would filter actual Bring2Life requests)
       if (bring2LifeOnly) {
         // For demo, showing subset of NFTs when toggled
-        return nft.id.includes('1') || nft.id.includes('3');
+        const id = nft.id || '';
+        return id.toString().includes('1') || id.toString().includes('3');
       }
 
       return true;
@@ -186,9 +211,9 @@ export function Gallery({ initialNfts, onNFTAction }: GalleryProps) {
     .sort((a, b) => {
       switch (sortBy) {
         case 'price-high':
-          return b.price - a.price;
+          return (b.price || 0) - (a.price || 0);
         case 'price-low':
-          return a.price - b.price;
+          return (a.price || 0) - (b.price || 0);
         case 'ending-soon':
           // Sort auctions by time left (ascending), non-auctions go to end
           if (a.listingType === 'auction' && b.listingType === 'auction') {

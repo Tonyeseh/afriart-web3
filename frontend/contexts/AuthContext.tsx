@@ -1,7 +1,8 @@
 "use client";
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
-import { useHederaConnector } from './WalletProvider';
-import { authAPI } from '../app/utils/api';
+import { useWallet } from '../hooks/useWallet';
+import { authAPI, hederaMirrorAPI } from '../app/utils/api';
+import { HederaAccountModal } from '../app/components/HederaAccountModal';
 
 interface User {
   id: string;
@@ -44,11 +45,14 @@ const TOKEN_KEY = 'afriart_auth_token';
 const USER_KEY = 'afriart_user';
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
-  const { walletConnector } = useHederaConnector();
+  const wallet = useWallet();
   const [user, setUser] = useState<User | null>(null);
   const [token, setToken] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [showAccountModal, setShowAccountModal] = useState(false);
+  const [pendingEvmAddress, setPendingEvmAddress] = useState<string>('');
+  const [walletAddress, setWalletAddress]  = useState<string>("")
 
   // Load token and user from localStorage on mount
   useEffect(() => {
@@ -60,6 +64,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         if (storedToken && storedUser) {
           setToken(storedToken);
           setUser(JSON.parse(storedUser));
+          setWalletAddress(user.walletAddress)
 
           // Verify token is still valid by fetching current user
           try {
@@ -101,91 +106,113 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setError(null);
 
     try {
-      console.log('Step 1: Initializing wallet connector...');
-      // Initialize wallet connector
-      await walletConnector.init();
+      console.log('Step 1: Opening wallet connection modal...');
 
-      console.log('Step 2: Opening wallet modal...');
-      // Open wallet selection modal
-      const session = await walletConnector.openModal();
+      // Open wallet modal if not already connected
+      if (!wallet.isConnected) {
+        await wallet.connect();
 
-      if (!session) {
-        throw new Error('Failed to connect wallet - no session returned');
+        // Wait a moment for the connection to be established
+        await new Promise(resolve => setTimeout(resolve, 1000));
       }
 
-      console.log('Session received:', session);
+      // Get wallet address after connection
+      let walletAddress = wallet.accountId;
 
-      // Get the connected wallet address from session
-      // The session has namespaces with accounts in CAIP-10 format
-      // Example: "hedera:testnet:0.0.12345"
-      const hederaNamespace = session.namespaces?.hedera;
+      console.log('Wallet connected:', {
+        address: wallet.address,
+        accountId: walletAddress,
+        caipAddress: wallet.caipAddress,
+        isFetchingAccountId: wallet.isFetchingAccountId
+      });
 
-      if (!hederaNamespace || !hederaNamespace.accounts || hederaNamespace.accounts.length === 0) {
-        throw new Error('No Hedera account found in session');
+      // If still fetching account ID from Mirror Node, wait for it
+      if (wallet.isFetchingAccountId) {
+        console.log('Waiting for Hedera account ID to be fetched from Mirror Node...');
+
+        // Wait for the account ID to be fetched (with timeout)
+        const maxWaitTime = 10000; // 10 seconds
+        const startTime = Date.now();
+
+        while (wallet.isFetchingAccountId && (Date.now() - startTime) < maxWaitTime) {
+          await new Promise(resolve => setTimeout(resolve, 500));
+          walletAddress = wallet.accountId;
+        }
+
+        console.log('Account ID after waiting:', walletAddress);
       }
 
-      // Extract account ID from CAIP-10 format (hedera:testnet:0.0.12345)
-      const account = hederaNamespace.accounts[0];
-      const walletAddress = account.split(':')[2]; // Gets "0.0.12345"
-
-      console.log('Wallet address extracted:', walletAddress);
-
+      // Check if we got a Hedera account ID or an EVM address
       if (!walletAddress || !walletAddress.match(/^0\.0\.\d+$/)) {
-        throw new Error(`Invalid Hedera account ID format: ${walletAddress}`);
+        // If we got an EVM address (0x...), and couldn't auto-fetch the account ID
+        if (wallet.address && wallet.address.startsWith('0x')) {
+          console.log('Could not auto-fetch Hedera account ID, showing modal...');
+
+          // Show modal to get Hedera account ID as fallback
+          setPendingEvmAddress(wallet.address);
+          setShowAccountModal(true);
+          setIsLoading(false);
+
+          // Return early - the flow will continue when user submits the modal
+          return;
+        } else {
+          throw new Error(`Invalid wallet address format. Expected Hedera account ID (0.0.xxxxx), got: ${walletAddress || wallet.address}`);
+        }
       }
 
-      console.log('Step 3: Getting authentication message from backend...');
-      // Step 1: Get authentication message from backend
+      console.log('Wallet address validated:', walletAddress);
+
+      // Get EVM address (needed for signature verification)
+      const evmAddress = wallet.address;
+      if (!evmAddress || !evmAddress.startsWith('0x')) {
+        throw new Error('Could not retrieve EVM address from wallet');
+      }
+
+      console.log('EVM address:', evmAddress);
+
+      console.log('Step 2: Getting authentication message from backend...');
+
+      // Get authentication message from backend
       const messageResponse = await authAPI.getAuthMessage(walletAddress);
       console.log('Message response:', messageResponse);
 
       // Extract message - handle different response structures
-      const message = messageResponse.data?.message || messageResponse.message;
+      const message = messageResponse.data.message;
 
-      if (!message || typeof message !== 'string') {
+      console.log(message)
+
+      if (!message || !messageResponse.success) {
         console.error('Invalid message response:', messageResponse);
         throw new Error('No authentication message received from backend');
       }
 
       console.log('Message to sign:', message);
 
-      console.log('Step 4: Signing message with wallet...');
-      // Step 2: Sign the message with the wallet
-      // SignMessageResult type: { id: number; jsonrpc: string; result: { signatureMap: string } }
-      const signResult = await walletConnector.signMessage({
-        message: message, // Send as string
-        signerAccountId: account // Use full CAIP-10 format
-      });
+      console.log('Step 3: Signing message with wallet (EIP-191 format)...');
 
-      console.log('Sign result:', signResult);
+      // Sign the message with the wallet (automatically uses EIP-191 format)
+      const signature = await wallet.signMessage(message);
 
-      if (!signResult || !signResult.result) {
-        throw new Error('Failed to sign message - no result returned');
+      console.log('Signature received:', signature);
+
+      if (!signature) {
+        throw new Error('Failed to sign message - no signature returned');
       }
 
-      // Extract signature from result.signatureMap
-      const signatureMap = signResult.result.signatureMap;
+      console.log('Step 4: Verifying signature with backend...');
 
-      if (!signatureMap) {
-        console.error('Sign result structure:', JSON.stringify(signResult, null, 2));
-        throw new Error('Failed to extract signature from sign result');
-      }
-
-      console.log('Signature extracted:', signatureMap);
-
-      console.log('Step 5: Verifying signature with backend...');
-      // Step 3: Verify signature with backend
-      // Note: publicKey is not provided by signMessage, backend will need to derive it
-      const verifyResponse = await authAPI.verifySignature({
-        walletAddress,
-        message,
-        signature: signatureMap, // Base64 encoded signatureMap
-        publicKey: '' // Not available from signMessage response
-      });
+      // Verify signature with backend
+      // Backend will recover the address from the signature and verify it matches evmAddress
+      const verifyResponse = (await authAPI.verifySignature({
+        walletAddress,    // Hedera account ID (0.0.xxxxx) for database lookup
+        message,          // The message that was signed
+        signature,        // The EIP-191 signature
+        evmAddress        // EVM address for signature verification
+      })).data;
 
       console.log('Verification response:', verifyResponse);
 
-      // Step 4: Handle response based on registration status
+      // Handle response based on registration status
       if (verifyResponse.needsRegistration) {
         // New user - need to register
         console.log('New user detected, showing registration modal');
@@ -212,7 +239,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     } finally {
       setIsLoading(false);
     }
-  }, [walletConnector]);
+  }, [wallet]);
 
   const register = useCallback(async (userData: RegisterData) => {
     setIsLoading(true);
@@ -250,8 +277,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         }
       }
 
-      // Disconnect from wallet connector
-      await walletConnector.disconnectAll();
+      // Disconnect from wallet
+      await wallet.disconnect();
 
       // Clear auth state
       setToken(null);
@@ -265,7 +292,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setToken(null);
       setUser(null);
     }
-  }, [token, walletConnector]);
+  }, [token, wallet]);
 
   const refreshUser = useCallback(async () => {
     if (!token) return;
@@ -281,6 +308,38 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   }, [token, disconnectWallet]);
 
+  /**
+   * Handle Hedera account ID submission from modal
+   */
+  const handleAccountIdSubmit = useCallback(async (accountId: string) => {
+    setShowAccountModal(false);
+    setIsLoading(true);
+
+    try {
+      // Store the account ID
+      wallet.setAccountId(accountId);
+
+      // Continue with the authentication flow
+      console.log('Using provided Hedera account ID:', accountId);
+
+      // Now continue with the rest of the connectWallet flow
+      await connectWallet();
+    } catch (err: any) {
+      console.error('Authentication error after account ID submission:', err);
+      setError(err.message || 'Failed to authenticate');
+      setIsLoading(false);
+    }
+  }, [wallet, connectWallet]);
+
+  /**
+   * Handle modal cancellation
+   */
+  const handleAccountIdCancel = useCallback(() => {
+    setShowAccountModal(false);
+    setPendingEvmAddress('');
+    wallet.disconnect();
+  }, [wallet]);
+
   const value: AuthContextType = {
     user,
     token,
@@ -293,7 +352,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     refreshUser
   };
 
-  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
+  return (
+    <AuthContext.Provider value={value}>
+      {children}
+      <HederaAccountModal
+        isOpen={showAccountModal}
+        evmAddress={pendingEvmAddress}
+        onSubmit={handleAccountIdSubmit}
+        onCancel={handleAccountIdCancel}
+      />
+    </AuthContext.Provider>
+  );
 }
 
 export function useAuth() {

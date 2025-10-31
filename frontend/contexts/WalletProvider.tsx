@@ -1,64 +1,84 @@
 "use client";
-import {
-  HederaSessionEvent,
-  DAppConnector,
-  HederaChainId,
-  HederaJsonRpcMethod,
-} from "@hashgraph/hedera-wallet-connect";
-import { LedgerId } from "@hashgraph/sdk";
-import { createContext, useContext, useMemo } from "react";
+import { createAppKit } from '@reown/appkit/react';
+import { WagmiProvider } from 'wagmi';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { wagmiAdapter, projectId, networks } from '../config/wagmi';
+import { hedera, hederaTestnet } from '@reown/appkit/networks';
+import { ReactNode } from 'react';
 
+// Setup QueryClient
+const queryClient = new QueryClient();
+
+// Metadata for the DApp
 const metadata = {
-  name: "Afriart v1",
-  description: "Hedera Afriart application",
-  url: "localhost",
-  icons: ["https://avatars.githubusercontent.com/u/31002956"],
+  name: 'Afriart',
+  description: 'Hedera NFT Marketplace for African Art',
+  url: typeof window !== 'undefined' ? window.location.origin : 'https://afriart.com',
+  icons: ['https://avatars.githubusercontent.com/u/31002956'],
 };
 
-const createDAppConnector = () =>
-  new DAppConnector(
-    metadata,
-    LedgerId.TESTNET,
-    process.env.NEXT_PUBLIC_WALLET_CONNECT_PROJECT_ID ||
-      "18a885a9b1d046716dc2067f815a4588",
-    Object.values(HederaJsonRpcMethod),
-    [HederaSessionEvent.ChainChanged, HederaSessionEvent.AccountsChanged],
-    [HederaChainId.Mainnet, HederaChainId.Testnet]
-  );
+// Create the AppKit modal
+const modal = createAppKit({
+  adapters: [wagmiAdapter],
+  projectId,
+  networks: [hederaTestnet, hedera],
+  defaultNetwork: hederaTestnet,
+  metadata,
+  features: {
+    analytics: true, // Optional - enable analytics
+    email: false, // Optional - disable email login
+    socials: [], // Optional - no social logins
+    emailShowWallets: true, // Optional - show wallets in email flow
+  },
+  themeMode: 'light',
+  themeVariables: {
+    '--w3m-accent': '#8B5CF6', // Purple accent color
+    '--w3m-border-radius-master': '2px',
+  },
+});
 
-interface WalletProviderContext {
-  walletConnector: DAppConnector;
+interface HederaWalletProviderProps {
+  children: ReactNode;
 }
 
-const WalletContext = createContext<WalletProviderContext | undefined>(
-  undefined
-);
-
-//More specific error message
-function useHederaConnector() {
-  const context = useContext(WalletContext);
-  if (context === undefined) {
-    throw new Error(
-      "useHederaConnector must be used within a HederaWalletProvider"
-    );
-  }
-  return context;
-}
-
-interface ProviderProps {
-  children: React.ReactNode;
-}
-
-function HederaWalletProvider({ children }: ProviderProps) {
-  //Use useMemo to ensure stable reference if recreating inside component
-  const walletConnector = useMemo(() => createDAppConnector(), []);
-
-  const value = useMemo(() => ({ walletConnector }), [walletConnector]);
-
+/**
+ * Hedera Wallet Provider using Reown AppKit
+ *
+ * This provider wraps the application with the necessary context providers
+ * for wallet connectivity using Reown's AppKit framework.
+ */
+export function HederaWalletProvider({ children }: HederaWalletProviderProps) {
   return (
-    <WalletContext.Provider value={value}>{children}</WalletContext.Provider>
+    <WagmiProvider config={wagmiAdapter.wagmiConfig}>
+      <QueryClientProvider client={queryClient}>
+        {children}
+      </QueryClientProvider>
+    </WagmiProvider>
   );
 }
 
-export { HederaWalletProvider, useHederaConnector };
 export default HederaWalletProvider;
+
+// Export the modal for use in components
+export { modal };
+
+// Backward compatibility export - use useWallet hook instead
+/**
+ * @deprecated Use useWallet hook from '../hooks/useWallet' instead
+ * This export is provided for backward compatibility only
+ */
+export function useHederaConnector() {
+  console.warn('useHederaConnector is deprecated. Please use useWallet hook from hooks/useWallet instead.');
+  // Return a minimal implementation that will work with old code
+  return {
+    walletConnector: {
+      init: async () => {},
+      openModal: async () => null,
+      signMessage: async () => ({ signatureMap: '' }),
+      getAccountId: () => null,
+      isConnected: () => false,
+      disconnectAll: async () => {},
+      on: () => {},
+    },
+  };
+}

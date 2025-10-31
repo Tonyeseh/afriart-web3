@@ -93,11 +93,13 @@ export function NFTCard({ nft, onBuy, onMakeOffer, onBid, onWatch, onFavorite, v
         )}
 
         {/* Technique badge */}
-        <div className="absolute bottom-3 left-3">
-          <Badge variant="secondary" className="bg-purple-600/80 text-white">
-            {nft.technique}
-          </Badge>
-        </div>
+        {nft.technique && (
+          <div className="absolute bottom-3 left-3">
+            <Badge variant="secondary" className="bg-purple-600/80 text-white">
+              {nft.technique}
+            </Badge>
+          </div>
+        )}
 
         {/* Bid count for auctions */}
         {nft.listingType === 'auction' && nft.bidCount && (
@@ -109,16 +111,16 @@ export function NFTCard({ nft, onBuy, onMakeOffer, onBid, onWatch, onFavorite, v
       </div>
 
       <div className="p-4">
-        <h3 className="text-white font-semibold mb-2 truncate">{nft.title}</h3>
-        
+        <h3 className="text-white font-semibold mb-2 truncate">{nft.title || 'Untitled'}</h3>
+
         <div className="space-y-2 mb-4">
           <div className="flex justify-between text-sm">
             <span className="text-gray-400">Creator</span>
-            <span className="text-white">{nft.creator}</span>
+            <span className="text-white truncate ml-2">{nft.creator || 'Unknown'}</span>
           </div>
           <div className="flex justify-between text-sm">
             <span className="text-gray-400">Owner</span>
-            <span className="text-white">{truncateAddress(nft.owner)}</span>
+            <span className="text-white truncate ml-2">{nft.owner || 'Unknown'}</span>
           </div>
           <div className="flex justify-between text-sm">
             <span className="text-gray-400">Physical Copy</span>
@@ -131,14 +133,16 @@ export function NFTCard({ nft, onBuy, onMakeOffer, onBid, onWatch, onFavorite, v
         {/* Price */}
         <div className="mb-4">
           <div className="text-xl font-bold text-white">
-            {nft.listingType === 'auction' && nft.currentBid 
-              ? `${nft.currentBid.toLocaleString()} HBAR`
-              : `${nft.price.toLocaleString()} HBAR`
+            {nft.listingType === 'auction' && nft.currentBid
+              ? `${(nft.currentBid || 0).toLocaleString()} HBAR`
+              : `${(nft.price || 0).toLocaleString()} HBAR`
             }
           </div>
-          <div className="text-sm text-green-400">
-            ${nft.usdPrice.toLocaleString()} USD
-          </div>
+          {nft.usdPrice !== undefined && nft.usdPrice > 0 && (
+            <div className="text-sm text-green-400">
+              ${nft.usdPrice.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} USD
+            </div>
+          )}
           {nft.listingType === 'auction' && (
             <div className="text-xs text-gray-400">Current bid</div>
           )}

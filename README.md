@@ -66,7 +66,11 @@ AfriArt is a decentralized NFT marketplace built on the Hedera network, enabling
 - **UI Library**: React 18
 - **Styling**: Tailwind CSS + Shadcn UI (Radix UI components)
 - **State Management**: React Context + Custom Hooks
-- **Web3**: @hashgraph/hedera-wallet-connect
+- **Web3 Integration**: Reown AppKit + Wagmi
+  - Wallet connectivity via Reown AppKit
+  - Hedera network support (Mainnet + Testnet)
+  - Multi-wallet support (HashPack, Blade, MetaMask Snaps)
+  - Message signing for authentication
 - **Real-time**: Socket.io Client
 - **Forms**: React Hook Form
 - **Animations**: Framer Motion
@@ -150,8 +154,8 @@ NEXT_PUBLIC_API_URL=http://localhost:4000
 NEXT_PUBLIC_HEDERA_NETWORK=testnet
 NEXT_PUBLIC_HEDERA_MIRROR_NODE=https://testnet.mirrornode.hedera.com
 
-# WalletConnect
-NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID=your_project_id_here
+# Reown AppKit (WalletConnect v2)
+NEXT_PUBLIC_WALLET_CONNECT_PROJECT_ID=your_project_id_here
 
 # Supabase (Client-side)
 NEXT_PUBLIC_SUPABASE_URL=https://your-project.supabase.co
@@ -255,6 +259,61 @@ pnpm start
 │  PostgreSQL  │ │  (Pinata)   │ │  Network   │
 └──────────────┘ └─────────────┘ └────────────┘
 ```
+
+---
+
+## Wallet Integration
+
+### Reown AppKit (formerly WalletConnect)
+
+AfriArt uses **Reown's AppKit** for secure and user-friendly wallet connectivity on Hedera network.
+
+#### Features
+- **Multi-Wallet Support**: Connect with HashPack, Blade, MetaMask Snaps, and other Hedera-compatible wallets
+- **Seamless UX**: Beautiful modal with automatic wallet detection
+- **Message Signing**: Secure authentication via wallet signatures
+- **Session Management**: Persistent connections with automatic reconnection
+- **Network Switching**: Easy toggle between Mainnet and Testnet
+
+#### Getting Your Project ID
+
+1. Visit [Reown Cloud Dashboard](https://cloud.reown.com)
+2. Create a new project
+3. Copy your Project ID
+4. Add it to `.env.local` as `NEXT_PUBLIC_WALLET_CONNECT_PROJECT_ID`
+
+#### Usage in Components
+
+```typescript
+import { useWallet } from '@/hooks/useWallet';
+
+function MyComponent() {
+  const { connect, disconnect, isConnected, accountId } = useWallet();
+
+  return (
+    <div>
+      {isConnected ? (
+        <>
+          <p>Connected: {accountId}</p>
+          <button onClick={disconnect}>Disconnect</button>
+        </>
+      ) : (
+        <button onClick={connect}>Connect Wallet</button>
+      )}
+    </div>
+  );
+}
+```
+
+#### Authentication Flow
+
+1. User clicks "Connect Wallet"
+2. AppKit modal opens with available wallets
+3. User selects wallet and approves connection
+4. Backend fetches public key from Hedera Mirror Node
+5. User signs authentication message
+6. Backend verifies signature and issues JWT token
+7. User is authenticated and can interact with platform
 
 ---
 
@@ -444,6 +503,9 @@ This project is licensed under the MIT License.
 
 ### Q1 2025 - MVP Launch
 - ✅ Basic UI and navigation
+- ✅ Wallet integration with Reown AppKit
+- ✅ Authentication system with JWT + wallet signatures
+- ✅ NFT listing and viewing
 - 🚧 NFT minting with HIP-412
 - 🚧 Direct sales and auctions
 - 🚧 Physical copy escrow

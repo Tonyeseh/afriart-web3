@@ -3,6 +3,8 @@ import { authService } from '../services/auth.service';
 import { supabase } from '../config/database';
 import { logger } from '../config/logger';
 
+type AuthPayload =  {timestamp: string, message: string, walletAddress: string}
+
 /**
  * GET /api/auth/message
  * Generate authentication message for wallet to sign
@@ -33,12 +35,14 @@ export async function getAuthMessage(
       return;
     }
 
-    const message = authService.createAuthMessage(walletAddress);
+    const authMessage = authService.createAuthMessage(walletAddress);
 
     res.json({
       success: true,
       data: {
-        message,
+        message: authMessage.message,
+        timestamp: authMessage.timestamp,
+        walletAddress: authMessage.walletAddress,
         expiresInMinutes: 5,
       },
     });
@@ -58,54 +62,49 @@ export async function verifyAndAuthenticate(
   next: NextFunction
 ): Promise<void> {
   try {
-    const { walletAddress, message, signature, publicKey } = req.body;
+    const { walletAddress, message, signature, evmAddress } = req.body;
+
+    logger.info({ walletAddress, evmAddress, messagePreview: message?.substring(0, 50) }, 'Verify request received');
 
     // Validate required fields
-    if (!walletAddress || !message || !signature || !publicKey) {
+    if (!walletAddress || !message || !signature || !evmAddress) {
       res.status(400).json({
         success: false,
-        error: 'Missing required fields: walletAddress, message, signature, publicKey',
+        error: 'Missing required fields: walletAddress (Hedera), message, signature, evmAddress (EVM)',
       });
       return;
     }
 
-    // Validate wallet address format
-    const walletRegex = /^0\.0\.\d+$/;
-    if (!walletRegex.test(walletAddress)) {
+    // Validate Hedera wallet address format (0.0.xxxxx)
+    const hederaWalletRegex = /^0\.0\.\d+$/;
+    if (!hederaWalletRegex.test(walletAddress)) {
       res.status(400).json({
         success: false,
-        error: 'Invalid Hedera wallet address format',
+        error: 'Invalid Hedera wallet address format. Expected: 0.0.xxxxx',
       });
       return;
     }
 
-    // Step 1: Validate message timestamp
-    if (!authService.validateAuthMessage(message)) {
-      res.status(401).json({
+    // Validate EVM address format (0x + 40 hex chars)
+    const evmAddressRegex = /^0x[0-9a-fA-F]{40}$/;
+    if (!evmAddressRegex.test(evmAddress)) {
+      res.status(400).json({
         success: false,
-        error: 'Authentication message expired or invalid. Please request a new message.',
+        error: 'Invalid EVM address format. Expected: 0x + 40 hex characters',
       });
       return;
     }
 
-    // Step 2: Verify wallet address in message matches request
-    const messageWallet = authService.extractWalletFromMessage(message);
-    if (messageWallet !== walletAddress) {
-      res.status(401).json({
-        success: false,
-        error: 'Wallet address mismatch',
-      });
-      return;
-    }
-
-    // Step 3: Verify signature
+    // Step 1: Verify signature using EIP-191 format
+    // This will recover the address from the signature and compare with evmAddress
     const isValidSignature = await authService.verifyWalletSignature(
       message,
       signature,
-      publicKey
+      evmAddress
     );
 
     if (!isValidSignature) {
+      logger.warn({ evmAddress, walletAddress }, 'Invalid signature verification');
       res.status(401).json({
         success: false,
         error: 'Invalid signature. Please try signing again.',
@@ -113,7 +112,9 @@ export async function verifyAndAuthenticate(
       return;
     }
 
-    // Step 4: Check if user exists in database
+    logger.info({ walletAddress, evmAddress }, 'Signature verified successfully');
+
+    // Step 2: Check if user exists in database (by Hedera wallet address)
     const { data: existingUser, error: userError } = await supabase
       .from('users')
       .select('id, wallet_address, role, display_name, email, profile_picture_url')
@@ -126,25 +127,28 @@ export async function verifyAndAuthenticate(
       throw new Error('Database error');
     }
 
-    // Step 5: If user doesn't exist, indicate registration needed
+    // Step 3: If user doesn't exist, indicate registration needed
     if (!existingUser) {
+      logger.info({ walletAddress, evmAddress }, 'New user needs registration');
       res.json({
         success: true,
         needsRegistration: true,
         data: {
           walletAddress,
-          publicKey,
+          evmAddress,
         },
       });
       return;
     }
 
-    // Step 6: Generate JWT token for existing user
+    // Step 4: Generate JWT token for existing user
     const token = authService.generateToken(
       existingUser.id,
       existingUser.wallet_address,
       existingUser.role
     );
+
+    logger.info({ userId: existingUser.id, walletAddress }, 'User authenticated successfully');
 
     res.json({
       success: true,

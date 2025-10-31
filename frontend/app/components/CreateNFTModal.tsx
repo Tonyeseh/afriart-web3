@@ -1,4 +1,6 @@
 import { useState, useRef, useEffect } from 'react';
+import { useForm, Controller } from 'react-hook-form';
+import { zodResolver } from '@hookform/resolvers/zod';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from './ui/dialog';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
@@ -17,13 +19,21 @@ import {
   CheckCircle,
   Info,
   Image as ImageIcon,
-  Video,
   Wallet,
-  Sparkles
+  Sparkles,
+  AlertCircle
 } from 'lucide-react';
 import { ImageWithFallback } from './figma/ImageWithFallback';
 import { motion } from 'motion/react';
-import { uploadAPI, nftAPI } from '../utils/api';
+import {
+  createNFTSchema,
+  artTechniques,
+  artMaterials,
+} from '../schemas/nft.schema';
+import { z } from 'zod';
+
+// Infer the form type from the schema
+type CreateNFTFormData = z.infer<typeof createNFTSchema>;
 
 interface CreateNFTModalProps {
   isOpen: boolean;
@@ -34,29 +44,6 @@ interface CreateNFTModalProps {
 
 type ModalState = 'form' | 'minting' | 'success';
 
-const artTechniques = [
-  'Painting',
-  'Drawing', 
-  'Sculpture',
-  'Printmaking',
-  'Photography',
-  'Film & Video Art',
-  'Digital Art'
-];
-
-const artMaterials: Record<string, string[]> = {
-  'Painting': ['oil paints', 'acrylics', 'watercolors', 'gouache', 'fresco', 'spray paint', 'digital painting tools'],
-  'Drawing': ['graphite pencils', 'charcoal', 'ink pens', 'pastel (oil)', 'pastel (chalk)', 'crayons', 'digital drawing apps & tablets'],
-  'Sculpture': ['stone', 'metal', 'wood', 'clay', 'plaster', 'resin', 'plastics', '3D printed materials', 'found objects'],
-  'Printmaking': ['woodcut', 'engraving', 'etching', 'lithography', 'screen printing (silk screen + ink)', 'monotype'],
-  'Photography': ['film cameras & negatives', 'darkroom paper & chemicals', 'digital cameras', 'editing software'],
-  'Film & Video Art': ['analog film reels', 'digital video cameras', 'editing software', 'projection & installations'],
-  'Digital Art': ['digital painting software', '3D modeling', 'AI-generated art', 'VR art tools', 'NFT platforms']
-};
-
-// File size constants
-const MAX_IMAGE_SIZE = 50 * 1024 * 1024; // 50MB
-const MAX_VIDEO_SIZE = 200 * 1024 * 1024; // 200MB
 const MAX_VIDEO_DURATION = 300; // 5 minutes in seconds
 
 const tooltips = {
@@ -75,79 +62,62 @@ export function CreateNFTModal({ isOpen, onClose, walletAddress, onSuccess }: Cr
   const [currentState, setCurrentState] = useState<ModalState>('form');
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // Form state
-  const [formData, setFormData] = useState({
-    title: '',
-    description: '',
-    technique: '',
-    material: '',
-    physicalCopy: false,
-    listingType: 'sale' as 'sale' | 'auction',
-    price: '',
-    auctionDuration: '24',
-    file: null as File | null
-  });
-
   const [dragActive, setDragActive] = useState(false);
   const [mintedNFT, setMintedNFT] = useState<any>(null);
-  const [validationErrors, setValidationErrors] = useState<string[]>([]);
   const [uploadProgress, setUploadProgress] = useState(0);
   const [mintingStep, setMintingStep] = useState<'uploading' | 'creating' | 'finalizing'>('uploading');
+  const [apiError, setApiError] = useState<string>('');
 
   const hbarToUsd = 0.25; // Mock conversion rate
-  const usdPrice = parseFloat(formData.price) * hbarToUsd || 0;
+
+  // Initialize react-hook-form with Zod validation
+  const {
+    register,
+    control,
+    handleSubmit,
+    watch,
+    setValue,
+    reset,
+    formState: { errors, isValid, isDirty }
+  } = useForm<CreateNFTFormData>({
+    resolver: zodResolver(createNFTSchema),
+    mode: 'onSubmit',
+    reValidateMode: 'onChange',
+    defaultValues: {
+      title: '',
+      description: '',
+      technique: undefined,
+      material: '',
+      physicalCopy: false,
+      listingType: 'sale',
+      price: '',
+      auctionDuration: '24',
+      file: undefined,
+    }
+  });
+
+  const watchedTechnique = watch('technique');
+  const watchedFile = watch('file');
+  const watchedListingType = watch('listingType');
+  const watchedPrice = watch('price');
+
+  const usdPrice = parseFloat(watchedPrice) * hbarToUsd || 0;
+
+  // Reset material when technique changes
+  useEffect(() => {
+    if (watchedTechnique) {
+      setValue('material', '', { shouldValidate: true });
+    }
+  }, [watchedTechnique, setValue]);
 
   // Memory leak fix: Clean up object URLs
   useEffect(() => {
     return () => {
-      if (formData.file) {
-        URL.revokeObjectURL(URL.createObjectURL(formData.file));
+      if (watchedFile) {
+        URL.revokeObjectURL(URL.createObjectURL(watchedFile));
       }
     };
-  }, [formData.file]);
-
-  // Enhanced form validation
-  const validateForm = (): string[] => {
-    const errors: string[] = [];
-
-    if (formData.title.length < 3) {
-      errors.push('Title must be at least 3 characters');
-    }
-    if (formData.title.length > 100) {
-      errors.push('Title must be less than 100 characters');
-    }
-    if (formData.description.length < 20) {
-      errors.push('Description must be at least 20 characters');
-    }
-    if (formData.description.length > 1000) {
-      errors.push('Description must be less than 1000 characters');
-    }
-    if (!formData.technique) {
-      errors.push('Please select an art technique');
-    }
-    if (!formData.material) {
-      errors.push('Please select a material');
-    }
-
-    const price = parseFloat(formData.price);
-    if (!formData.price || isNaN(price)) {
-      errors.push('Please enter a valid price');
-    } else if (price <= 0) {
-      errors.push('Price must be greater than 0');
-    } else if (price > 1000000) {
-      errors.push('Price seems unreasonably high (max: 1,000,000 HBAR)');
-    }
-
-    if (!formData.file) {
-      errors.push('Please upload an artwork file');
-    }
-
-    return errors;
-  };
-
-  const isFormValid = () => {
-    return validateForm().length === 0;
-  };
+  }, [watchedFile]);
 
   // Get video duration
   const getVideoDuration = (file: File): Promise<number> => {
@@ -169,45 +139,31 @@ export function CreateNFTModal({ isOpen, onClose, walletAddress, onSuccess }: Cr
   };
 
   const handleFileSelect = async (file: File) => {
-    const isImage = file.type.startsWith('image/');
     const isVideo = file.type.startsWith('video/');
-
-    // Validate file type
-    const validTypes = ['image/jpeg', 'image/png', 'image/jpg', 'video/mp4'];
-    if (!validTypes.includes(file.type)) {
-      alert('Please upload JPG, PNG, or MP4 files only');
-      return;
-    }
-
-    // Validate file size
-    const maxSize = isVideo ? MAX_VIDEO_SIZE : MAX_IMAGE_SIZE;
-    if (file.size > maxSize) {
-      alert(`File size must be less than ${maxSize / 1024 / 1024}MB for ${isVideo ? 'videos' : 'images'}`);
-      return;
-    }
 
     // Check video duration for videos
     if (isVideo) {
       try {
         const duration = await getVideoDuration(file);
         if (duration > MAX_VIDEO_DURATION) {
-          alert('Video duration must be less than 5 minutes');
+          setApiError('Video duration must be less than 5 minutes');
           return;
         }
       } catch (error) {
         console.error('Error checking video duration:', error);
-        alert('Failed to validate video. Please try another file.');
+        setApiError('Failed to validate video. Please try another file.');
         return;
       }
     }
 
-    setFormData(prev => ({ ...prev, file }));
+    setValue('file', file, { shouldValidate: true });
+    setApiError('');
   };
 
   const handleDrop = (e: React.DragEvent) => {
     e.preventDefault();
     setDragActive(false);
-    
+
     const files = Array.from(e.dataTransfer.files);
     if (files.length > 0) {
       handleFileSelect(files[0]);
@@ -221,46 +177,36 @@ export function CreateNFTModal({ isOpen, onClose, walletAddress, onSuccess }: Cr
     }
   };
 
-  const handleMintNFT = async () => {
-    // Validate form before minting
-    const errors = validateForm();
-    if (errors.length > 0) {
-      setValidationErrors(errors);
-      return;
-    }
-
-    setValidationErrors([]);
+  const onSubmit = async (data: CreateNFTFormData) => {
+    console.log('Form submitted with data:', data);
+    setApiError('');
     setCurrentState('minting');
     setUploadProgress(0);
     setMintingStep('uploading');
 
     try {
-      // Step 1: Prepare form data for backend
-      if (!formData.file) {
-        throw new Error('No file selected');
+      // Get JWT token from localStorage with correct key
+      const token = localStorage.getItem('afriart_auth_token');
+      if (!token) {
+        throw new Error('Authentication required. Please login again.');
       }
 
       setMintingStep('creating');
       setUploadProgress(30);
 
-      // Step 2: Call real minting API endpoint
+      // Prepare form data for backend
       const mintFormData = new FormData();
-      mintFormData.append('title', formData.title);
-      mintFormData.append('description', formData.description);
-      mintFormData.append('image', formData.file);
-      mintFormData.append('technique', formData.technique);
-      mintFormData.append('material', formData.material);
-
-      // Get JWT token from localStorage
-      const token = localStorage.getItem('authToken');
-      if (!token) {
-        throw new Error('Authentication required. Please login again.');
-      }
+      mintFormData.append('title', data.title);
+      mintFormData.append('description', data.description);
+      mintFormData.append('image', data.file);
+      mintFormData.append('technique', data.technique);
+      mintFormData.append('material', data.material);
 
       setUploadProgress(50);
 
-      // Call the real minting endpoint
-      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000'}/api/nfts/mint`, {
+      // Call the minting endpoint
+      const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000';
+      const response = await fetch(`${API_URL}/api/nfts/mint`, {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${token}`,
@@ -270,13 +216,20 @@ export function CreateNFTModal({ isOpen, onClose, walletAddress, onSuccess }: Cr
 
       setUploadProgress(80);
 
+      // Parse response
       const result = await response.json();
 
-      if (!response.ok || !result.success) {
+      // Handle error responses
+      if (!response.ok) {
+        const errorMessage = result.error || result.message || `Server error: ${response.status}`;
+        throw new Error(errorMessage);
+      }
+
+      if (!result.success) {
         throw new Error(result.error || 'Failed to mint NFT');
       }
 
-      // Step 3: Finalize
+      // Finalize
       setMintingStep('finalizing');
       setUploadProgress(95);
 
@@ -290,19 +243,19 @@ export function CreateNFTModal({ isOpen, onClose, walletAddress, onSuccess }: Cr
         description: nft.description,
         technique: nft.art_technique,
         material: nft.art_material,
-        price: parseFloat(formData.price),
-        usdPrice: parseFloat(formData.price) * hbarToUsd,
-        physicalCopy: formData.physicalCopy,
+        price: typeof data.price === 'number' ? data.price : parseFloat(data.price) || 0,
+        usdPrice: (typeof data.price === 'number' ? data.price : parseFloat(data.price) || 0) * hbarToUsd,
+        physicalCopy: data.physicalCopy,
         image: nft.image_url,
         ipfsHash: nft.image_ipfs_cid,
         metadataUrl: nft.metadata_url,
         metadataCid: nft.metadata_ipfs_cid,
         creator: walletAddress,
         owner: walletAddress,
-        listingType: formData.listingType,
-        auctionDuration: formData.listingType === 'auction' ? parseInt(formData.auctionDuration) : undefined,
-        auctionEndTime: formData.listingType === 'auction'
-          ? new Date(Date.now() + parseInt(formData.auctionDuration) * 60 * 60 * 1000)
+        listingType: data.listingType,
+        auctionDuration: data.listingType === 'auction' ? parseInt(data.auctionDuration || '24') : undefined,
+        auctionEndTime: data.listingType === 'auction'
+          ? new Date(Date.now() + parseInt(data.auctionDuration || '24') * 60 * 60 * 1000)
           : undefined,
         hederaTransactionId: transaction.transactionId,
         mintedAt: nft.minted_at,
@@ -311,31 +264,33 @@ export function CreateNFTModal({ isOpen, onClose, walletAddress, onSuccess }: Cr
       setUploadProgress(100);
       setMintedNFT(newNFT);
       setCurrentState('success');
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error minting NFT:', error);
-      setValidationErrors([
-        error instanceof Error ? error.message : 'Failed to mint NFT. Please try again.'
-      ]);
+
+      // Properly extract error message
+      let errorMessage = 'Failed to mint NFT. Please try again.';
+
+      if (error instanceof Error) {
+        errorMessage = error.message;
+      } else if (typeof error === 'string') {
+        errorMessage = error;
+      } else if (error?.message) {
+        errorMessage = error.message;
+      } else if (error?.error) {
+        errorMessage = error.error;
+      }
+
+      setApiError(errorMessage);
       setCurrentState('form');
       setUploadProgress(0);
     }
   };
 
   const handleReset = () => {
-    setFormData({
-      title: '',
-      description: '',
-      technique: '',
-      material: '',
-      physicalCopy: false,
-      listingType: 'sale',
-      price: '',
-      auctionDuration: '24',
-      file: null
-    });
+    reset();
     setCurrentState('form');
     setMintedNFT(null);
-    setValidationErrors([]);
+    setApiError('');
   };
 
   const handleClose = () => {
@@ -344,10 +299,10 @@ export function CreateNFTModal({ isOpen, onClose, walletAddress, onSuccess }: Cr
   };
 
   const renderFilePreview = () => {
-    if (!formData.file) return null;
+    if (!watchedFile) return null;
 
-    const isVideo = formData.file.type.startsWith('video/');
-    const fileUrl = URL.createObjectURL(formData.file);
+    const isVideo = watchedFile.type.startsWith('video/');
+    const fileUrl = URL.createObjectURL(watchedFile);
 
     return (
       <div className="relative">
@@ -357,7 +312,8 @@ export function CreateNFTModal({ isOpen, onClose, walletAddress, onSuccess }: Cr
           <img src={fileUrl} alt="Preview" className="w-full h-40 object-cover rounded-lg" />
         )}
         <button
-          onClick={() => setFormData(prev => ({ ...prev, file: null }))}
+          type="button"
+          onClick={() => setValue('file', undefined as any, { shouldValidate: true })}
           className="absolute top-2 right-2 p-1 bg-red-600 rounded-full hover:bg-red-700 transition-colors"
         >
           <X className="h-4 w-4 text-white" />
@@ -367,26 +323,19 @@ export function CreateNFTModal({ isOpen, onClose, walletAddress, onSuccess }: Cr
   };
 
   const renderFormState = () => (
-    <div className="space-y-6 max-h-[70vh] overflow-y-auto">
+    <form onSubmit={handleSubmit(onSubmit)} className="space-y-6 max-h-[70vh] overflow-y-auto">
       {/* Wallet Address Display */}
       <div className="flex items-center justify-end text-sm text-gray-400">
         <Wallet className="h-4 w-4 mr-2" />
         <span>Connected: {walletAddress}</span>
       </div>
 
-      {/* Validation Errors */}
-      {validationErrors.length > 0 && (
+      {/* API Error */}
+      {apiError && (
         <div className="p-4 bg-red-900/20 border border-red-700 rounded-lg">
           <div className="flex items-start space-x-2">
-            <Info className="h-5 w-5 text-red-400 mt-0.5 flex-shrink-0" />
-            <div className="flex-1">
-              <p className="text-sm font-semibold text-red-400 mb-2">Please fix the following errors:</p>
-              <ul className="list-disc list-inside space-y-1">
-                {validationErrors.map((error, index) => (
-                  <li key={index} className="text-sm text-red-300">{error}</li>
-                ))}
-              </ul>
-            </div>
+            <AlertCircle className="h-5 w-5 text-red-400 mt-0.5 flex-shrink-0" />
+            <p className="text-sm text-red-300">{apiError}</p>
           </div>
         </div>
       )}
@@ -397,7 +346,7 @@ export function CreateNFTModal({ isOpen, onClose, walletAddress, onSuccess }: Cr
           <Label htmlFor="title">Title *</Label>
           <TooltipProvider>
             <Tooltip>
-              <TooltipTrigger>
+              <TooltipTrigger type="button">
                 <Info className="h-4 w-4 text-gray-400" />
               </TooltipTrigger>
               <TooltipContent>
@@ -408,11 +357,13 @@ export function CreateNFTModal({ isOpen, onClose, walletAddress, onSuccess }: Cr
         </div>
         <Input
           id="title"
-          value={formData.title}
-          onChange={(e) => setFormData(prev => ({ ...prev, title: e.target.value }))}
+          {...register('title')}
           placeholder="Enter artwork title"
           className="bg-gray-800 border-gray-700"
         />
+        {errors.title && (
+          <p className="text-sm text-red-400">{errors.title.message}</p>
+        )}
       </div>
 
       {/* Description */}
@@ -421,7 +372,7 @@ export function CreateNFTModal({ isOpen, onClose, walletAddress, onSuccess }: Cr
           <Label htmlFor="description">Description *</Label>
           <TooltipProvider>
             <Tooltip>
-              <TooltipTrigger>
+              <TooltipTrigger type="button">
                 <Info className="h-4 w-4 text-gray-400" />
               </TooltipTrigger>
               <TooltipContent>
@@ -432,12 +383,14 @@ export function CreateNFTModal({ isOpen, onClose, walletAddress, onSuccess }: Cr
         </div>
         <Textarea
           id="description"
-          value={formData.description}
-          onChange={(e) => setFormData(prev => ({ ...prev, description: e.target.value }))}
+          {...register('description')}
           placeholder="Describe your artwork, inspiration, and creative process..."
           rows={3}
           className="bg-gray-800 border-gray-700"
         />
+        {errors.description && (
+          <p className="text-sm text-red-400">{errors.description.message}</p>
+        )}
       </div>
 
       {/* Technique and Material */}
@@ -447,7 +400,7 @@ export function CreateNFTModal({ isOpen, onClose, walletAddress, onSuccess }: Cr
             <Label>Technique *</Label>
             <TooltipProvider>
               <Tooltip>
-                <TooltipTrigger>
+                <TooltipTrigger type="button">
                   <Info className="h-4 w-4 text-gray-400" />
                 </TooltipTrigger>
                 <TooltipContent>
@@ -456,18 +409,25 @@ export function CreateNFTModal({ isOpen, onClose, walletAddress, onSuccess }: Cr
               </Tooltip>
             </TooltipProvider>
           </div>
-          <Select value={formData.technique} onValueChange={(value) => 
-            setFormData(prev => ({ ...prev, technique: value, material: '' }))
-          }>
-            <SelectTrigger className="bg-gray-800 border-gray-700">
-              <SelectValue placeholder="Select technique" />
-            </SelectTrigger>
-            <SelectContent className="bg-gray-800 border-gray-700">
-              {artTechniques.map(technique => (
-                <SelectItem key={technique} value={technique}>{technique}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+          <Controller
+            name="technique"
+            control={control}
+            render={({ field }) => (
+              <Select value={field.value} onValueChange={field.onChange}>
+                <SelectTrigger className="bg-gray-800 border-gray-700">
+                  <SelectValue placeholder="Select technique" />
+                </SelectTrigger>
+                <SelectContent className="bg-gray-800 border-gray-700">
+                  {artTechniques.map(technique => (
+                    <SelectItem key={technique} value={technique}>{technique}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            )}
+          />
+          {errors.technique && (
+            <p className="text-sm text-red-400">{errors.technique.message}</p>
+          )}
         </div>
 
         <div className="space-y-2">
@@ -475,7 +435,7 @@ export function CreateNFTModal({ isOpen, onClose, walletAddress, onSuccess }: Cr
             <Label>Material *</Label>
             <TooltipProvider>
               <Tooltip>
-                <TooltipTrigger>
+                <TooltipTrigger type="button">
                   <Info className="h-4 w-4 text-gray-400" />
                 </TooltipTrigger>
                 <TooltipContent>
@@ -484,20 +444,29 @@ export function CreateNFTModal({ isOpen, onClose, walletAddress, onSuccess }: Cr
               </Tooltip>
             </TooltipProvider>
           </div>
-          <Select 
-            value={formData.material} 
-            onValueChange={(value) => setFormData(prev => ({ ...prev, material: value }))}
-            disabled={!formData.technique}
-          >
-            <SelectTrigger className="bg-gray-800 border-gray-700">
-              <SelectValue placeholder="Select material" />
-            </SelectTrigger>
-            <SelectContent className="bg-gray-800 border-gray-700">
-              {(artMaterials[formData.technique] || []).map(material => (
-                <SelectItem key={material} value={material}>{material}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+          <Controller
+            name="material"
+            control={control}
+            render={({ field }) => (
+              <Select
+                value={field.value}
+                onValueChange={field.onChange}
+                disabled={!watchedTechnique}
+              >
+                <SelectTrigger className="bg-gray-800 border-gray-700">
+                  <SelectValue placeholder="Select material" />
+                </SelectTrigger>
+                <SelectContent className="bg-gray-800 border-gray-700">
+                  {(artMaterials[watchedTechnique || ''] || []).map(material => (
+                    <SelectItem key={material} value={material}>{material}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            )}
+          />
+          {errors.material && (
+            <p className="text-sm text-red-400">{errors.material.message}</p>
+          )}
         </div>
       </div>
 
@@ -507,7 +476,7 @@ export function CreateNFTModal({ isOpen, onClose, walletAddress, onSuccess }: Cr
           <Label htmlFor="physical-copy">Physical Copy Available</Label>
           <TooltipProvider>
             <Tooltip>
-              <TooltipTrigger>
+              <TooltipTrigger type="button">
                 <Info className="h-4 w-4 text-gray-400" />
               </TooltipTrigger>
               <TooltipContent>
@@ -516,10 +485,16 @@ export function CreateNFTModal({ isOpen, onClose, walletAddress, onSuccess }: Cr
             </Tooltip>
           </TooltipProvider>
         </div>
-        <Switch
-          id="physical-copy"
-          checked={formData.physicalCopy}
-          onCheckedChange={(checked) => setFormData(prev => ({ ...prev, physicalCopy: checked }))}
+        <Controller
+          name="physicalCopy"
+          control={control}
+          render={({ field }) => (
+            <Switch
+              id="physical-copy"
+              checked={field.value}
+              onCheckedChange={field.onChange}
+            />
+          )}
         />
       </div>
 
@@ -529,7 +504,7 @@ export function CreateNFTModal({ isOpen, onClose, walletAddress, onSuccess }: Cr
           <Label>Listing Type *</Label>
           <TooltipProvider>
             <Tooltip>
-              <TooltipTrigger>
+              <TooltipTrigger type="button">
                 <Info className="h-4 w-4 text-gray-400" />
               </TooltipTrigger>
               <TooltipContent>
@@ -538,36 +513,42 @@ export function CreateNFTModal({ isOpen, onClose, walletAddress, onSuccess }: Cr
             </Tooltip>
           </TooltipProvider>
         </div>
-        <div className="grid grid-cols-2 gap-4">
-          <button
-            type="button"
-            onClick={() => setFormData(prev => ({ ...prev, listingType: 'sale' }))}
-            className={`p-4 rounded-lg border-2 transition-all ${
-              formData.listingType === 'sale'
-                ? 'border-purple-500 bg-purple-500/10'
-                : 'border-gray-700 bg-gray-800 hover:border-gray-600'
-            }`}
-          >
-            <div className="text-center">
-              <p className="font-semibold text-white mb-1">Fixed Price</p>
-              <p className="text-xs text-gray-400">Sell at a set price</p>
+        <Controller
+          name="listingType"
+          control={control}
+          render={({ field }) => (
+            <div className="grid grid-cols-2 gap-4">
+              <button
+                type="button"
+                onClick={() => field.onChange('sale')}
+                className={`p-4 rounded-lg border-2 transition-all ${
+                  field.value === 'sale'
+                    ? 'border-purple-500 bg-purple-500/10'
+                    : 'border-gray-700 bg-gray-800 hover:border-gray-600'
+                }`}
+              >
+                <div className="text-center">
+                  <p className="font-semibold text-white mb-1">Fixed Price</p>
+                  <p className="text-xs text-gray-400">Sell at a set price</p>
+                </div>
+              </button>
+              <button
+                type="button"
+                onClick={() => field.onChange('auction')}
+                className={`p-4 rounded-lg border-2 transition-all ${
+                  field.value === 'auction'
+                    ? 'border-purple-500 bg-purple-500/10'
+                    : 'border-gray-700 bg-gray-800 hover:border-gray-600'
+                }`}
+              >
+                <div className="text-center">
+                  <p className="font-semibold text-white mb-1">Auction</p>
+                  <p className="text-xs text-gray-400">Accept bids</p>
+                </div>
+              </button>
             </div>
-          </button>
-          <button
-            type="button"
-            onClick={() => setFormData(prev => ({ ...prev, listingType: 'auction' }))}
-            className={`p-4 rounded-lg border-2 transition-all ${
-              formData.listingType === 'auction'
-                ? 'border-purple-500 bg-purple-500/10'
-                : 'border-gray-700 bg-gray-800 hover:border-gray-600'
-            }`}
-          >
-            <div className="text-center">
-              <p className="font-semibold text-white mb-1">Auction</p>
-              <p className="text-xs text-gray-400">Accept bids</p>
-            </div>
-          </button>
-        </div>
+          )}
+        />
       </div>
 
       {/* Price / Starting Bid */}
@@ -575,11 +556,11 @@ export function CreateNFTModal({ isOpen, onClose, walletAddress, onSuccess }: Cr
         <div className="space-y-2">
           <div className="flex items-center space-x-2">
             <Label htmlFor="price">
-              {formData.listingType === 'auction' ? 'Starting Bid (HBAR) *' : 'Price (HBAR) *'}
+              {watchedListingType === 'auction' ? 'Starting Bid (HBAR) *' : 'Price (HBAR) *'}
             </Label>
             <TooltipProvider>
               <Tooltip>
-                <TooltipTrigger>
+                <TooltipTrigger type="button">
                   <Info className="h-4 w-4 text-gray-400" />
                 </TooltipTrigger>
                 <TooltipContent>
@@ -593,12 +574,14 @@ export function CreateNFTModal({ isOpen, onClose, walletAddress, onSuccess }: Cr
             type="number"
             min="0"
             step="0.01"
-            value={formData.price}
-            onChange={(e) => setFormData(prev => ({ ...prev, price: e.target.value }))}
+            {...register('price')}
             placeholder="0.00"
             className="bg-gray-800 border-gray-700"
           />
-          {formData.price && (
+          {errors.price && (
+            <p className="text-sm text-red-400">{errors.price.message}</p>
+          )}
+          {watchedPrice && !errors.price && (
             <p className="text-sm text-green-400">
               ≈ ${usdPrice.toFixed(2)} USD
             </p>
@@ -606,13 +589,13 @@ export function CreateNFTModal({ isOpen, onClose, walletAddress, onSuccess }: Cr
         </div>
 
         {/* Auction Duration (only for auctions) */}
-        {formData.listingType === 'auction' && (
+        {watchedListingType === 'auction' && (
           <div className="space-y-2">
             <div className="flex items-center space-x-2">
               <Label>Auction Duration *</Label>
               <TooltipProvider>
                 <Tooltip>
-                  <TooltipTrigger>
+                  <TooltipTrigger type="button">
                     <Info className="h-4 w-4 text-gray-400" />
                   </TooltipTrigger>
                   <TooltipContent>
@@ -621,22 +604,25 @@ export function CreateNFTModal({ isOpen, onClose, walletAddress, onSuccess }: Cr
                 </Tooltip>
               </TooltipProvider>
             </div>
-            <Select
-              value={formData.auctionDuration}
-              onValueChange={(value) => setFormData(prev => ({ ...prev, auctionDuration: value }))}
-            >
-              <SelectTrigger className="bg-gray-800 border-gray-700">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent className="bg-gray-800 border-gray-700">
-                <SelectItem value="6">6 hours</SelectItem>
-                <SelectItem value="12">12 hours</SelectItem>
-                <SelectItem value="24">24 hours</SelectItem>
-                <SelectItem value="48">2 days</SelectItem>
-                <SelectItem value="72">3 days</SelectItem>
-                <SelectItem value="168">7 days</SelectItem>
-              </SelectContent>
-            </Select>
+            <Controller
+              name="auctionDuration"
+              control={control}
+              render={({ field }) => (
+                <Select value={field.value} onValueChange={field.onChange}>
+                  <SelectTrigger className="bg-gray-800 border-gray-700">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent className="bg-gray-800 border-gray-700">
+                    <SelectItem value="6">6 hours</SelectItem>
+                    <SelectItem value="12">12 hours</SelectItem>
+                    <SelectItem value="24">24 hours</SelectItem>
+                    <SelectItem value="48">2 days</SelectItem>
+                    <SelectItem value="72">3 days</SelectItem>
+                    <SelectItem value="168">7 days</SelectItem>
+                  </SelectContent>
+                </Select>
+              )}
+            />
           </div>
         )}
       </div>
@@ -647,7 +633,7 @@ export function CreateNFTModal({ isOpen, onClose, walletAddress, onSuccess }: Cr
           <Label>Upload Artwork *</Label>
           <TooltipProvider>
             <Tooltip>
-              <TooltipTrigger>
+              <TooltipTrigger type="button">
                 <Info className="h-4 w-4 text-gray-400" />
               </TooltipTrigger>
               <TooltipContent>
@@ -656,14 +642,14 @@ export function CreateNFTModal({ isOpen, onClose, walletAddress, onSuccess }: Cr
             </Tooltip>
           </TooltipProvider>
         </div>
-        
-        {formData.file ? (
+
+        {watchedFile ? (
           renderFilePreview()
         ) : (
           <div
             className={`border-2 border-dashed rounded-lg p-8 text-center transition-colors ${
-              dragActive 
-                ? 'border-purple-500 bg-purple-500/10' 
+              dragActive
+                ? 'border-purple-500 bg-purple-500/10'
                 : 'border-gray-600 hover:border-gray-500'
             }`}
             onDrop={handleDrop}
@@ -693,12 +679,12 @@ export function CreateNFTModal({ isOpen, onClose, walletAddress, onSuccess }: Cr
                 </Button>
               </div>
               <p className="text-xs text-gray-500">
-                JPG, PNG, or MP4 • Max size: 20MB
+                JPG, PNG, or MP4 • Max size: 50MB (images), 200MB (videos)
               </p>
             </div>
           </div>
         )}
-        
+
         <input
           ref={fileInputRef}
           type="file"
@@ -706,22 +692,24 @@ export function CreateNFTModal({ isOpen, onClose, walletAddress, onSuccess }: Cr
           onChange={handleFileInputChange}
           className="hidden"
         />
+        {errors.file && (
+          <p className="text-sm text-red-400">{errors.file.message as string}</p>
+        )}
       </div>
 
       {/* Action Buttons */}
       <div className="flex justify-between pt-6">
-        <Button variant="outline" onClick={handleClose}>
+        <Button type="button" variant="outline" onClick={handleClose}>
           Cancel
         </Button>
-        <Button 
-          onClick={handleMintNFT}
-          disabled={!isFormValid()}
-          className="bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-700 hover:to-pink-700 disabled:opacity-50 disabled:cursor-not-allowed"
+        <Button
+          type="submit"
+          className="bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-700 hover:to-pink-700"
         >
           Mint NFT
         </Button>
       </div>
-    </div>
+    </form>
   );
 
   const renderMintingState = () => {
@@ -740,11 +728,11 @@ export function CreateNFTModal({ isOpen, onClose, walletAddress, onSuccess }: Cr
 
     const getProgressValue = () => {
       if (mintingStep === 'uploading') {
-        return uploadProgress * 0.5; // Uploading is 50% of total progress
+        return uploadProgress * 0.5;
       } else if (mintingStep === 'creating') {
-        return 50 + 25; // 75%
+        return 50 + 25;
       } else if (mintingStep === 'finalizing') {
-        return 50 + 25 + 20; // 95%
+        return 50 + 25 + 20;
       }
       return 0;
     };
@@ -805,11 +793,11 @@ export function CreateNFTModal({ isOpen, onClose, walletAddress, onSuccess }: Cr
           <div className="relative">
             <CheckCircle className="h-20 w-20 text-green-400" />
             <motion.div
-              animate={{ 
+              animate={{
                 scale: [1, 1.2, 1],
                 opacity: [0.5, 1, 0.5]
               }}
-              transition={{ 
+              transition={{
                 duration: 2,
                 repeat: Infinity,
                 ease: "easeInOut"
@@ -818,18 +806,18 @@ export function CreateNFTModal({ isOpen, onClose, walletAddress, onSuccess }: Cr
             />
           </div>
         </div>
-        
+
         {/* Confetti-like sparkles */}
         {[...Array(6)].map((_, i) => (
           <motion.div
             key={i}
             initial={{ scale: 0, y: 0 }}
-            animate={{ 
+            animate={{
               scale: [0, 1, 0],
               y: [-20, -60, -100],
               x: [0, (i % 2 === 0 ? 30 : -30) * (i + 1), 0]
             }}
-            transition={{ 
+            transition={{
               duration: 1.5,
               delay: i * 0.1,
               repeat: Infinity,
@@ -837,8 +825,8 @@ export function CreateNFTModal({ isOpen, onClose, walletAddress, onSuccess }: Cr
             }}
             className="absolute top-1/2 left-1/2"
           >
-            <Sparkles className="h-4 w-4 text-purple-400" style={{ 
-              transform: `rotate(${i * 60}deg)` 
+            <Sparkles className="h-4 w-4 text-purple-400" style={{
+              transform: `rotate(${i * 60}deg)`
             }} />
           </motion.div>
         ))}
@@ -879,7 +867,7 @@ export function CreateNFTModal({ isOpen, onClose, walletAddress, onSuccess }: Cr
 
       {/* Action Buttons */}
       <div className="flex flex-col sm:flex-row gap-3 justify-center pt-4">
-        <Button 
+        <Button
           onClick={() => {
             onSuccess(mintedNFT);
             handleClose();
@@ -888,7 +876,7 @@ export function CreateNFTModal({ isOpen, onClose, walletAddress, onSuccess }: Cr
         >
           View in My Creations
         </Button>
-        <Button 
+        <Button
           variant="outline"
           onClick={handleReset}
           className="border-gray-600 text-gray-300 hover:bg-gray-800"

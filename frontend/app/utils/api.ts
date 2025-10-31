@@ -66,7 +66,7 @@ export const authAPI = {
     walletAddress: string;
     message: string;
     signature: string;
-    publicKey: string;
+    evmAddress: string;
   }) {
     return apiRequest('/auth/verify', {
       method: 'POST',
@@ -411,6 +411,110 @@ export const uploadAPI = {
     contentLength?: string;
   }> {
     return apiRequest(`/upload/test/${cid}`);
+  },
+};
+
+// Hedera Mirror Node API functions
+export const hederaMirrorAPI = {
+  /**
+   * Get the base URL for Hedera Mirror Node based on network
+   */
+  getMirrorNodeUrl(): string {
+    const network = process.env.NEXT_PUBLIC_HEDERA_NETWORK || 'testnet';
+    return network === 'mainnet'
+      ? 'https://mainnet.mirrornode.hedera.com/api/v1'
+      : 'https://testnet.mirrornode.hedera.com/api/v1';
+  },
+
+  /**
+   * Fetch account information including public key from Hedera Mirror Node
+   * @param accountId - Hedera account ID (e.g., "0.0.12345")
+   * @returns Account data including public key
+   */
+  async getAccountInfo(accountId: string): Promise<{
+    account: string;
+    key: {
+      _type: string;
+      key: string;
+    };
+    balance: {
+      balance: number;
+      timestamp: string;
+      tokens: any[];
+    };
+    [key: string]: any;
+  }> {
+    const url = `${this.getMirrorNodeUrl()}/accounts/${accountId}`;
+
+    try {
+      const response = await fetch(url);
+
+      if (!response.ok) {
+        let errorMessage = `Failed to fetch account info: ${response.status}`;
+        try {
+          const errorData = await response.json();
+          errorMessage = errorData._status?.messages?.[0]?.message || errorMessage;
+        } catch (e) {
+          errorMessage = response.statusText || errorMessage;
+        }
+        throw new Error(errorMessage);
+      }
+
+      return await response.json();
+    } catch (error) {
+      console.error(`Mirror Node API request failed for account ${accountId}:`, error);
+      throw error;
+    }
+  },
+
+  /**
+   * Extract the public key string from account info
+   * @param accountId - Hedera account ID (e.g., "0.0.12345")
+   * @returns Public key in hex/DER format
+   */
+  async getPublicKey(accountId: string): Promise<string> {
+    const accountInfo = await this.getAccountInfo(accountId);
+
+    if (!accountInfo.key || !accountInfo.key.key) {
+      throw new Error(`No public key found for account ${accountId}`);
+    }
+
+    return accountInfo.key.key;
+  },
+
+  /**
+   * Get Hedera account ID from EVM address
+   * @param evmAddress - Ethereum-style address (e.g., "0x...")
+   * @returns Hedera account ID (e.g., "0.0.12345")
+   */
+  async getAccountIdFromEvmAddress(evmAddress: string): Promise<string | null> {
+    const url = `${this.getMirrorNodeUrl()}/accounts/${evmAddress}`;
+
+    try {
+      const response = await fetch(url);
+
+      if (!response.ok) {
+        console.warn(`Failed to fetch account for EVM address ${evmAddress}: ${response.status}`);
+        return null;
+      }
+
+      const data = await response.json();
+
+      // The Mirror Node should return the account ID in the response
+      if (data.account) {
+        return data.account; // Should be in format "0.0.12345"
+      }
+
+      // Alternative: check if evm_address field exists
+      if (data.evm_address && data.evm_address.toLowerCase() === evmAddress.toLowerCase()) {
+        return data.account;
+      }
+
+      return null;
+    } catch (error) {
+      console.error(`Error fetching account ID for EVM address ${evmAddress}:`, error);
+      return null;
+    }
   },
 };
 

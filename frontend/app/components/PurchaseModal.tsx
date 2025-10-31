@@ -28,7 +28,7 @@ interface NFTData {
 interface PurchaseModalProps {
   isOpen: boolean;
   onClose: () => void;
-  nft: NFT;
+  nft: NFTData;
   buyerWallet: string;
   onSuccess: () => void;
 }
@@ -51,9 +51,12 @@ export function PurchaseModal({ isOpen, onClose, nft, buyerWallet, onSuccess }: 
 
   const physicalCopyPrice = 50; // This should come from NFT data
   const shippingCost = 25;
-  const basePrice = nft.price;
+  const basePrice = nft.price || 0;
+  const baseUsdPrice = nft.usdPrice || (basePrice * 0.25); // Fallback to HBAR to USD conversion if not provided
   const totalPrice = includePhysical ? basePrice + physicalCopyPrice + shippingCost : basePrice;
-  const totalUsdPrice = includePhysical ? (basePrice * 0.25) + (physicalCopyPrice * 0.25) + (shippingCost * 0.25) : nft.usdPrice;
+  const totalUsdPrice = includePhysical
+    ? baseUsdPrice + (physicalCopyPrice * 0.25) + (shippingCost * 0.25)
+    : baseUsdPrice;
 
   const handlePurchase = async () => {
     try {

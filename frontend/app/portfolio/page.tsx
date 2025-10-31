@@ -5,27 +5,23 @@ import { mockNFTs } from '../data/mockNFTs';
 import { useToast } from '../components/Toast';
 import { NFT } from '../components/NFTCard';
 import { useAppState } from '../hooks/useAppState';
+import { useAuth } from 'contexts/AuthContext';
+import { CreateNFTModal } from 'app/components/CreateNFTModal';
+import { useState } from 'react';
 
 export default function PortfolioPage() {
   const { showToast } = useToast();
-  const { 
-    isWalletConnected, 
-    setIsWalletConnected, 
-    setWalletAddress,
-    watchedNFTs, 
+  const {
+    watchedNFTs,
     favoritedNFTs,
-    userCreatedNFTs 
+    userCreatedNFTs,
+    setShowCreateNFTModal
   } = useAppState();
-
-  const handleConnectWallet = () => {
-    // Mock wallet connection
-    setIsWalletConnected(true);
-    setWalletAddress('0.0.123456');
-    showToast('success', 'Wallet connected successfully!');
-  };
+  const {isAuthenticated, connectWallet, user} = useAuth();
+  const [showCreateNFTModal, setshowCreateNFTModal] = useState<boolean>(false);
 
   const handleWatchToggle = (nft: NFT) => {
-    if (!isWalletConnected) {
+    if (!isAuthenticated) {
       showToast('error', 'Please connect your wallet first');
       return;
     }
@@ -49,8 +45,12 @@ export default function PortfolioPage() {
     }
   };
 
+  const handleNFTCreated = (newNFT: NFT) => {
+    showToast('success', `"${newNFT.title}" has been minted successfully!`);
+  };
+
   const handleNFTAction = (action: string, nft: NFT) => {
-    if (!isWalletConnected && (action === 'buy' || action === 'bid' || action === 'offer')) {
+    if (!isAuthenticated && (action === 'buy' || action === 'bid' || action === 'offer')) {
       showToast('error', 'Please connect your wallet first');
       return;
     }
@@ -68,21 +68,21 @@ export default function PortfolioPage() {
   };
 
   const handleCreateNFT = () => {
-    if (!isWalletConnected) {
+    if (!isAuthenticated) {
       showToast('error', 'Please connect your wallet first');
       return;
     }
-    showToast('info', 'Create NFT functionality would open here');
+    setShowCreateNFTModal(true);
   };
 
-  if (!isWalletConnected) {
+  if (!isAuthenticated) {
     return (
       <div className="min-h-screen flex items-center justify-center">
         <div className="text-center">
           <h2 className="text-2xl font-bold text-white mb-4">Connect Your Wallet</h2>
           <p className="text-gray-400 mb-6">Please connect your wallet to access your portfolio</p>
           <button 
-            onClick={handleConnectWallet}
+            onClick={connectWallet}
             className="px-6 py-3 bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-700 hover:to-pink-700 text-white rounded-lg"
           >
             Connect Wallet
@@ -93,13 +93,20 @@ export default function PortfolioPage() {
   }
 
   return (
+    <>
     <UserDashboard 
       userNFTs={mockNFTs.slice(0, 3)}
       userCreations={[...userCreatedNFTs, ...mockNFTs.slice(3, 6)]}
       watchedNFTs={mockNFTs.filter(nft => watchedNFTs.includes(nft.id))}
       favoritedNFTs={mockNFTs.filter(nft => favoritedNFTs.includes(nft.id))}
       onNFTAction={handleNFTAction}
-      onCreateNFT={handleCreateNFT}
+      onCreateNFT={() => setshowCreateNFTModal(true)}
     />
+    <CreateNFTModal
+            isOpen={showCreateNFTModal}
+            onClose={() => setshowCreateNFTModal(false)}
+            walletAddress={user?.walletAddress || ''}
+            onSuccess={handleNFTCreated}
+          /></>
   );
 }

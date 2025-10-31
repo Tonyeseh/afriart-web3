@@ -3,7 +3,7 @@
 import { ReactNode, useState, useEffect } from 'react';
 import { Navbar } from './Navbar';
 import { Footer } from './Footer';
-import { PurchaseModal, PurchaseData } from './PurchaseModal';
+import { PurchaseModal } from './PurchaseModal';
 import { CreateNFTModal } from './CreateNFTModal';
 import { RegistrationModal } from './RegistrationModal';
 import { useToast } from './Toast';
@@ -37,6 +37,8 @@ export default function AppLayout({ children }: AppLayoutProps) {
 
   const [showRegistrationModal, setShowRegistrationModal] = useState(false);
   const [pendingWalletAddress, setPendingWalletAddress] = useState<string>('');
+
+  console.log(user, "user logged")
 
   // Handle auth errors and show registration modal when needed
   useEffect(() => {
@@ -72,102 +74,27 @@ export default function AppLayout({ children }: AppLayoutProps) {
     showToast('success', 'Wallet disconnected');
   };
 
-  const handleRegistrationComplete = () => {
-    setShowRegistrationModal(false);
-    setPendingWalletAddress('');
-    showToast('success', 'Registration completed! Welcome to AfriArt!');
-  };
+  // const handlePurchaseConfirm = (data: PurchaseData) => {
+  //   console.log('Purchase data:', data);
 
-  const handleWatchToggle = (nft: NFT) => {
-    if (!isAuthenticated) {
-      showToast('error', 'Please connect your wallet first');
-      return;
-    }
+  //   if (purchaseMode === 'buy') {
+  //     showToast('success', `Successfully purchased "${selectedNFT?.title}"!`);
+  //   } else if (purchaseMode === 'bid') {
+  //     showToast('success', `Bid placed on "${selectedNFT?.title}"!`);
+  //   } else if (purchaseMode === 'offer') {
+  //     showToast('success', `Offer submitted for "${selectedNFT?.title}"!`);
+  //   }
 
-    const isCurrentlyWatched = watchedNFTs.includes(nft.id);
-
-    if (isCurrentlyWatched) {
-      setWatchedNFTs(prev => prev.filter(id => id !== nft.id));
-      showToast('success', `Removed "${nft.title}" from watchlist`);
-    } else {
-      setWatchedNFTs(prev => [...prev, nft.id]);
-      showToast('success', `Added "${nft.title}" to watchlist`);
-    }
-  };
-
-  const handleFavoriteToggle = (nft: NFT) => {
-    const isCurrentlyFavorited = favoritedNFTs.includes(nft.id);
-
-    if (isCurrentlyFavorited) {
-      setFavoritedNFTs(prev => prev.filter(id => id !== nft.id));
-      showToast('success', `Removed "${nft.title}" from favorites`);
-    } else {
-      setFavoritedNFTs(prev => [...prev, nft.id]);
-      showToast('success', `Added "${nft.title}" to favorites`);
-    }
-  };
-
-  const handleNFTAction = (action: string, nft: NFT) => {
-    if (!isAuthenticated && (action === 'buy' || action === 'bid' || action === 'offer')) {
-      showToast('error', 'Please connect your wallet first');
-      return;
-    }
-
-    switch (action) {
-      case 'buy':
-        setSelectedNFT(nft);
-        setPurchaseMode('buy');
-        setShowPurchaseModal(true);
-        break;
-      case 'bid':
-        setSelectedNFT(nft);
-        setPurchaseMode('bid');
-        setShowPurchaseModal(true);
-        break;
-      case 'offer':
-        setSelectedNFT(nft);
-        setPurchaseMode('offer');
-        setShowPurchaseModal(true);
-        break;
-      case 'watch':
-        handleWatchToggle(nft);
-        break;
-      case 'favorite':
-        handleFavoriteToggle(nft);
-        break;
-      default:
-        console.log(`Action: ${action}`, nft);
-    }
-  };
-
-  const handlePurchaseConfirm = (data: PurchaseData) => {
-    console.log('Purchase data:', data);
-
-    if (purchaseMode === 'buy') {
-      showToast('success', `Successfully purchased "${selectedNFT?.title}"!`);
-    } else if (purchaseMode === 'bid') {
-      showToast('success', `Bid placed on "${selectedNFT?.title}"!`);
-    } else if (purchaseMode === 'offer') {
-      showToast('success', `Offer submitted for "${selectedNFT?.title}"!`);
-    }
-
-    if (data.includePhysical) {
-      showToast('warning', 'Physical copy request submitted to artist');
-    }
-  };
-
-  const handleCreateNFT = () => {
-    if (!isAuthenticated) {
-      showToast('error', 'Please connect your wallet first');
-      return;
-    }
-    setShowCreateNFTModal(true);
-  };
+  //   if (data.includePhysical) {
+  //     showToast('warning', 'Physical copy request submitted to artist');
+  //   }
+  // };
 
   const handleNFTCreated = (newNFT: NFT) => {
     setUserCreatedNFTs(prev => [newNFT, ...prev]);
     showToast('success', `"${newNFT.title}" has been minted successfully!`);
   };
+
 
   return (
     <div className="dark min-h-screen bg-black text-white">
@@ -184,13 +111,13 @@ export default function AppLayout({ children }: AppLayoutProps) {
 
       <Footer />
 
-      <PurchaseModal
+      {/* <PurchaseModal
         isOpen={showPurchaseModal}
         onClose={() => setShowPurchaseModal(false)}
         nft={selectedNFT}
-        mode={purchaseMode}
-        onConfirm={handlePurchaseConfirm}
-      />
+        onSuccess={() => console.log("Art purchased")}
+        buyerWallet={user.walletAddress || "wallet address"}
+      /> */}
 
       <CreateNFTModal
         isOpen={showCreateNFTModal}
