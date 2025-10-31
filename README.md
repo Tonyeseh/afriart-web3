@@ -541,3 +541,5 @@ This project is licensed under the MIT License.
 **Built with ❤️ for African artists and the global art community**
 
 *AfriArt - Where African creativity meets Web3 innovation*
+
+Relevant documents like pitch deck, video and certificate are contained here [here](https://drive.google.com/drive/folders/1-02Yn45mosHFFUxnNtQ_mT9PzluFi3DM?usp=drive_link)
